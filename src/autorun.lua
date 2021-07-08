@@ -48,6 +48,62 @@ local BlacklistedNetMessages = {
 	["pac_footstep"] = true
 }
 
+local d_gsub = string.gsub
+
+--- Doesn't account for \0 but we shouldn't use that in URLs anyway.
+local function patternSafe(s)
+	return d_gsub(s, "[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1")
+end
+
+local function pattern(str) return { str, true } end
+local function simple(str) return { patternSafe(str), false } end
+
+--- URL Whitelist. sound.PlayURL and HTTP/Whatever will be forced to use this.
+local URLWhitelist = {
+	-- Soundcloud
+	pattern [[%w+%.sndcdn%.com/.+]],
+
+	-- Google Translate Api, Needs an api key.
+	simple [[translate.google.com]],
+
+	-- Discord
+	pattern [[cdn[%w-_]*%.discordapp%.com/.+]],
+
+	-- Reddit
+	simple [[i.redditmedia.com]],
+	simple [[i.redd.it]],
+	simple [[preview.redd.it]],
+
+	-- Shoutcast
+	simple [[yp.shoutcast.com]],
+
+	-- Dropbox
+	simple [[dl.dropboxusercontent.com]],
+	pattern [[%w+%.dl%.dropboxusercontent%.com/(.+)]],
+	simple [[www.dropbox.com]],
+	simple [[dl.dropbox.com]],
+
+	-- Github
+	simple [[raw.githubusercontent.com]],
+	simple [[gist.githubusercontent.com]],
+	simple [[raw.github.com]],
+	simple [[cloud.githubusercontent.com]],
+
+	-- Steam
+	simple [[steamuserimages-a.akamaihd.net]],
+	simple [[steamcdn-a.akamaihd.net]],
+
+	-- Gitlab
+	simple [[gitlab.com]],
+
+	-- Onedrive
+	simple [[onedrive.live.com/redir]],
+
+	simple [[youtubedl.mattjeanes.com]],
+
+	simple [[google.com]],
+}
+
 --[[
 	Make sure debug.getinfo(1).name and .namewhat don't appear
 
@@ -95,7 +151,7 @@ end
 
 local function getLocation(n)
 	local data = d_getinfo(n or 2, "S")
-	return data and data.source or "unknown"
+	return data and data.source
 end
 
 --- Todo make this palette not shit
@@ -123,12 +179,31 @@ local function log(urgency, ...)
 	if urgency == LOGGER.EVIL then
 		alert(...)
 	end
-	sautorun.log( d_format("[%s] -> ", urgency) .. d_format(...) .. " -> " .. getLocation(3) )
+	-- Atrocious debug.getinfo spam
+	sautorun.log( d_format("[%s] -> ", urgency) .. d_format(...) .. " -> " .. getLocation(4) or getLocation(3) )
 end
 
 local function isMaliciousModel(mdl)
 	-- https://github.com/Facepunch/garrysmod-issues/issues/4449
-	if d_stringmatch(mdl,".*%.(.*)") == "bsp" then return true end
+	if d_stringmatch(mdl, ".*%.(.*)") == "bsp" then return true end
+	return false
+end
+
+local function isWhitelistedURL(url)
+	if not isstring(url) then return false end
+
+	local relative = d_stringmatch(url, "^https?://(.*)")
+	if not relative then return false end
+
+	for _, data in ipairs(URLWhitelist) do
+		local match, is_pattern = data[1], data[2]
+
+		local haystack = is_pattern and relative or (d_stringmatch(relative, "(.-)/.*") or relative)
+		if d_stringfind(haystack, "^" .. match .. (is_pattern and "" or "$") ) then
+			return true
+		end
+	end
+
 	return false
 end
 
@@ -162,24 +237,19 @@ end
 
 --- Returns a locked version of table t.
 local function getLocked(t)
-    return setmetatable({}, {
-        __index = t,
-        __newindex = function(_, k, v)
-            -- Do not allow overwriting, which could cause crashes.
-            if rawget(t, k) == nil then
-                rawset(t, k, v)
-            end
-        end
-    })
+	return setmetatable({}, {
+		__index = t,
+		__newindex = function(_, k, v)
+			-- Do not allow overwriting, which could cause crashes.
+			if rawget(t, k) == nil then
+				rawset(t, k, v)
+			end
+		end
+	})
 end
 
 local LOCKED_REGISTRY = getLocked(REGISTRY)
 ProtectedMetatables[LOCKED_REGISTRY] = "Locked _R"
-
--- Library funcs
-local function printf(...)
-	d_print(d_format(...))
-end
 
 --- Startup
 
@@ -256,7 +326,7 @@ end)
 _G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(command, ...)
 	for _, blacklisted in ipairs(BlacklistedConCommands) do
 		if d_stringfind(command, blacklisted) then
-			return log( LOGGER.WARN, "Found blacklisted cmd [%s] being executed with RunConsoleCommand %s", command, getLocation() )
+			return log( LOGGER.WARN, "Found blacklisted cmd ['%s'] being executed with RunConsoleCommand", command )
 		end
 	end
 	log(LOGGER.INFO, "RunConsoleCommand(%s)", command)
@@ -288,7 +358,7 @@ _G.table.insert = detours.attach(table.insert, function(myTable, key, value)
 		if trueTableSize(myTable) > 100000 then return log(LOGGER.WARN, "trueTableSize in table.insert was too large!") end
 		if istable(value) and isTableMostlyCopied(myTable, value) then return log(LOGGER.WARN, "Copied table found in table.insert, lag/crash attempt?") end
 	end
-	if value~=nil and isnumber(key) and key > 2^31-1 then log(LOGGER.WARN, "table.insert with massive key!") return end
+	if value~=nil and isnumber(key) and key > 2^31-1 then return log(LOGGER.WARN, "table.insert with massive key!") end
 	return pureLuaInsert(myTable, key, value)
 end)
 
@@ -391,7 +461,7 @@ local HookList = {
 
 _G.debug.sethook = detours.attach(debug.sethook, function(thread, hook, mask, count)
 	return __undetoured(thread, hook, mask, count)
-	--[[log( LOGGER.WARN, "Someone just debug.sethook here! %s", getLocation(3) )
+	--[[
 	if thread and count then
 		-- Thread isn't omitted
 		HookList["current"] = {hook, mask, count}
@@ -659,8 +729,11 @@ _G.game.CleanUpMap = detours.attach(game.CleanUpMap, function(dontSendToClients,
 end)
 
 _G.gui.OpenURL = detours.attach(gui.OpenURL, function(url)
-	-- TODO: Just add a url whitelist to this.
-	log( LOGGER.INFO, "Blocked gui.OpenURL('%s')", url )
+	if not isWhitelistedURL(url) then
+		return log( LOGGER.INFO, "Blocked unwhitelisted gui.OpenURL('%s')", url )
+	end
+	log( LOGGER.INFO, "gui.OpenURL('%s')", url )
+	return __undetoured(url)
 end)
 
 _G.gui.HideGameUI = detours.attach(gui.HideGameUI, function()
@@ -692,7 +765,20 @@ _G.os.date = detours.attach(os.date, function(format, time)
 end)
 
 _G.sound.PlayURL = detours.attach(sound.PlayURL, function(url, flags, callback)
-	return log( LOGGER.WARN, "Blocked sound.PlayURL('%s', '%s', %p)", url, flags, callback )
+	if not isWhitelistedURL(url) then
+		return log( LOGGER.WARN, "Blocked sound.PlayURL('%s', '%s', %p)", url, flags, callback )
+	end
+
+	log( LOGGER.INFO, "sound.PlayURL('%s', '%s', %p)", url, flags, callback )
+	return __undetoured(url, flags, callback)
+end)
+
+_G.HTTP = detours.attach(HTTP, function(params)
+	if not params then return end -- todo: investigate if this should error instead
+	if not isWhitelistedURL(params.url) then
+		return log(LOGGER.INFO, "Blocked HTTP Request to %s", params.url)
+	end
+	return __undetoured(params)
 end)
 
 -- Registry detours
