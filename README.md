@@ -1,4 +1,5 @@
-# Safety
+# ``Safety`` [![License](https://img.shields.io/github/license/Vurv78/Safety?color=red)](https://opensource.org/licenses/MIT)
+
 This is a repo that contains files to be used with [Autorun-rs](https://github.com/Vurv78/Autorun-rs).
 
 Take back control from the shitty security hellhole that Gmod is.  
