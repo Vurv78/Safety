@@ -9,31 +9,32 @@
 
 -- Files to hide in file reading and writing. If a path contains any of these keywords, it will be blocked. Uses string.find
 local BlockedPaths = {
-	["sf_filedata"] = true,
-	["e2files"] = true,
-	["starfall"] = true,
-	["expression2"] = true
+	"sf_filedata",
+	"e2files",
+	"starfall",
+	"expression2"
 }
 
 -- Commands to not let execute in RunConsoleCommand.
+-- Ply:ConCommand will also use these.
 local BlacklistedConCommands = {
-	["voicerecord"] = true,
-	["retry"] = true,
-	["startmovie"] = true,
-	["endmovie"] = true,
-	["playdemo"] = true,
-	["play"] = true,
-	["bind"] = true,
-	["unbindall"] = true,
-	["exit"] = true,
-	["fov"] = true,
-	["sendrcon"] = true,
-	["cl_timeout"] = true,
-	["screenshot requested"] = true,
-	["screenshot"] = true
+	"voicerecord",
+	"retry",
+	"startmovie",
+	"endmovie",
+	"playdemo",
+	"play",
+	"bind",
+	"unbindall",
+	"exit",
+	"fov",
+	"sendrcon",
+	"cl_timeout",
+	"screenshot requested",
+	"screenshot"
 }
 
--- Bad Net Messages to use with net.Start, prevent them from executing. Uses __eq
+-- Bad Net Messages to use with net.Start, prevent them from executing. Checks equality
 local BlacklistedNetMessages = {
 	["ash_ban"] = true,
 	["pac_to_contraption"] = true,
@@ -104,7 +105,7 @@ local SECONDARY_COLOR = Color(130, 224, 171)
 local TERTIARY_COLOR = Color(3, 161, 252)
 local ALERT_COLOR = Color(255, 0, 0)
 
-local printColor = _G.chat.AddText
+local printColor = chat.AddText
 
 local function alert(...)
 	printColor( PRIMARY_COLOR, "Safety" , WHITE, ": ", ALERT_COLOR, d_format(...) )
@@ -122,7 +123,7 @@ local function log(urgency, ...)
 	if urgency == LOGGER.EVIL then
 		alert(...)
 	end
-	sautorun.log( d_format("[%s] -> ", urgency) .. d_format(...) .. " -> " .. getLocation() )
+	sautorun.log( d_format("[%s] -> ", urgency) .. d_format(...) .. " -> " .. getLocation(3) )
 end
 
 local function isMaliciousModel(mdl)
@@ -244,7 +245,7 @@ setmetatable(begunMeshes, {
 	__mode = "k"
 })
 
-_G.mesh.Begin = detours.attach(_G.mesh.Begin, function(mesh, primitiveType, primiteCount)
+_G.mesh.Begin = detours.attach(mesh.Begin, function(mesh, primitiveType, primiteCount)
 	if mesh then
 		if begunMeshes[mesh] then return log( LOGGER.WARN, "mesh.Begin called with a mesh that has already been started.") end
 		begunMeshes[mesh] = true
@@ -252,9 +253,11 @@ _G.mesh.Begin = detours.attach(_G.mesh.Begin, function(mesh, primitiveType, prim
 	__undetoured(mesh, primitiveType, primiteCount)
 end)
 
-_G.RunConsoleCommand = detours.attach(_G.RunConsoleCommand, function(command, ...)
-	if BlacklistedConCommands[command] then
-		return log( LOGGER.WARN, "Found blacklisted cmd [%s] being executed with RunConsoleCommand %s", command, getLocation() )
+_G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(command, ...)
+	for _, blacklisted in ipairs(BlacklistedConCommands) do
+		if d_stringfind(command, blacklisted) then
+			return log( LOGGER.WARN, "Found blacklisted cmd [%s] being executed with RunConsoleCommand %s", command, getLocation() )
+		end
 	end
 	log(LOGGER.INFO, "RunConsoleCommand(%s)", command)
 	return __undetoured(command, ...)
@@ -309,16 +312,24 @@ end)
 
 --- Detour checking if the pointer is the same.
 _G.string.format = detours.attach(string.format, function(format, ...)
-	if format and d_stringfind(format,"%%p") then
+	if format and d_stringfind(format, "%%p") then
 		-- Whether its gonna try and find a pointer or not.
 		return __undetoured(format, ...)
 	end
 
 	local T = {...}
-	log( LOGGER.INFO, "Detouring string.format ptr" )
+	local did_shadow = false
 	for k, arg in pairs(T) do
-		T[k] = detours.shadow(arg)
+		local new, shadowed = detours.shadow(arg)
+		if shadowed then
+			did_shadow = true
+		end
+		T[k] = new
 	end
+	if did_shadow then
+		log( LOGGER.INFO, "Detoured string.format('%s', ...)", format )
+	end
+
 	return __undetoured( format, unpack(T) )
 end)
 
@@ -378,19 +389,21 @@ local HookList = {
 	current = {}
 }
 
-_G.debug.sethook = detours.attach(debug.sethook, function(thread,hook,mask,count)
-	log( LOGGER.WARN, "Someone just debug.sethook here! %s", getLocation(3) )
+_G.debug.sethook = detours.attach(debug.sethook, function(thread, hook, mask, count)
+	return __undetoured(thread, hook, mask, count)
+	--[[log( LOGGER.WARN, "Someone just debug.sethook here! %s", getLocation(3) )
 	if thread and count then
 		-- Thread isn't omitted
 		HookList["current"] = {hook, mask, count}
 	else
 		-- If thread is omitted
 		HookList["current"] = {thread, hook, mask}
-	end
+	end]]
 end)
 
 _G.debug.gethook = detours.attach(debug.gethook, function(thread)
-	return d_unpack(HookList["current"])
+	--return d_unpack(HookList["current"])
+	return __undetoured(thread)
 end)
 
 local fakeMetatables = setmetatable({}, {
@@ -434,7 +447,7 @@ _G.debug.getmetatable = detours.attach(debug.getmetatable, function(object)
 	return __undetoured( detours.shadow(object) )
 end)
 
-_G.setfenv = detours.attach(_G.setfenv, function(location, enviroment)
+_G.setfenv = detours.attach(setfenv, function(location, enviroment)
 	if location == 0 then
 		log(LOGGER.WARN, "Someone tried to setfenv(0, x)!") return
 	end
@@ -450,7 +463,7 @@ _G.debug.getfenv = detours.attach(debug.getfenv, function(object)
 	return __undetoured( detours.shadow(object) )
 end)
 
-_G.FindMetaTable = detours.attach(_G.FindMetaTable, function(name)
+_G.FindMetaTable = detours.attach(FindMetaTable, function(name)
 	return __undetoured(name)
 end)
 
@@ -594,19 +607,19 @@ _G.string.rep = detours.attach(string.rep, function(str,reps,separator)
 	return __undetoured(str,reps,sep)
 end)
 
-_G.ClientsideModel = detours.attach(_G.ClientsideModel, function(model,rendergroup)
+_G.ClientsideModel = detours.attach(ClientsideModel, function(model,rendergroup)
 	if not isstring(model) then return end
 	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideModel with a .bsp model!") return end
 	return __undetoured(model,rendergroup)
 end)
 
-_G.ClientsideScene = detours.attach(_G.ClientsideScene, function(model,targetEnt)
+_G.ClientsideScene = detours.attach(ClientsideScene, function(model,targetEnt)
 	if not isstring(model) then return end
 	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideScene with a .bsp model!") return end
 	return __undetoured(model,targetEnt)
 end)
 
-_G.ClientsideRagdoll = detours.attach(_G.ClientsideRagdoll, function(model,rendergroup)
+_G.ClientsideRagdoll = detours.attach(ClientsideRagdoll, function(model,rendergroup)
 	if not isstring(model) then return end
 	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideRagdoll with a .bsp model!") return end
 	return __undetoured(model,rendergroup)
@@ -618,15 +631,16 @@ _G.ents.CreateClientProp = detours.attach(ents.CreateClientProp, function(model)
 	return __undetoured(model)
 end)
 
-_G.CompileString = detours.attach(_G.CompileString, function(code,identifier,handleError)
+-- Todo: Stuff with these
+_G.CompileString = detours.attach(CompileString, function(code,identifier,handleError)
 	return __undetoured(code,identifier,handleError)
 end)
 
-_G.RunString = detours.attach(_G.RunString, function(code,identifier,handleError)
+_G.RunString = detours.attach(RunString, function(code,identifier,handleError)
 	return __undetoured(code,identifier,handleError)
 end)
 
-_G.RunStringEx = detours.attach(_G.RunStringEx, function(code,identifier,handleError)
+_G.RunStringEx = detours.attach(RunStringEx, function(code,identifier,handleError)
 	return __undetoured(code,identifier,handleError)
 end)
 
@@ -653,12 +667,14 @@ _G.gui.HideGameUI = detours.attach(gui.HideGameUI, function()
 	log( LOGGER.INFO, "Blocked gui.HideGameUI" )
 end)
 
-_G.AddConsoleCommand = detours.attach(_G.AddConsoleCommand, function(name, helpText, flags)
+_G.AddConsoleCommand = detours.attach(AddConsoleCommand, function(name, helpText, flags)
 	-- Garry used to have it so that adding a console command named 'sendrcon' would crash your game.
 	-- Malicious anticheats and others would abuse this. I'm not sure if adding sendrcon even still crashes you.
-	-- https://github.com/MFSiNC/HAC/blob/f7da724eab0e93105c86448c284faf4f05751ce3/Legacy/v13/HeX's%20AntiCheat/lua/HAC/sv_Crash.lua
+	-- https://github.com/CookieMaster/GMD/blob/11eae396d7448df325601d748ee09293ba0dd5c3/Addons/ULX%20Addons/custom-ulx-commands-and-utilities-23-1153/CustomCommands/lua/ulx/modules/sh/cc_util(2).lua
 
-	if name == "sendrcon" then return log( LOGGER.EVIL, "Someone tried to crash by Adding 'sendrcon' as a concmd" ) end
+	if d_stringfind(name, "sendrcon") then
+		return log( LOGGER.EVIL, "Someone tried to crash by adding 'sendrcon' as a concmd" )
+	end
 
 	__undetoured(name,helpText,flags)
 end)
