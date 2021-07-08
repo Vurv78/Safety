@@ -246,13 +246,13 @@ setmetatable(begunMeshes, {
 
 _G.mesh.Begin = detours.attach(_G.mesh.Begin, function(mesh, primitiveType, primiteCount)
 	if mesh then
-		if begunMeshes[mesh] then alert("mesh.Begin called with a mesh that has already been started.") return end
+		if begunMeshes[mesh] then return log( LOGGER.WARN, "mesh.Begin called with a mesh that has already been started.") end
 		begunMeshes[mesh] = true
 	end
 	__undetoured(mesh, primitiveType, primiteCount)
 end)
 
-_G.RunConsoleCommand = detours.attach(_G.RunConsoleCommand,function(command, ...)
+_G.RunConsoleCommand = detours.attach(_G.RunConsoleCommand, function(command, ...)
 	if BlacklistedConCommands[command] then
 		return log( LOGGER.WARN, "Found blacklisted cmd [%s] being executed with RunConsoleCommand %s", command, getLocation() )
 	end
@@ -279,7 +279,7 @@ local function pureLuaInsert(tab, key, val)
 end
 
 -- This doesn't call the __newindex metamethod, so we need to patrol this func as well.
-_G.table.insert = detours.attach(table.insert,function(myTable, key, value)
+_G.table.insert = detours.attach(table.insert, function(myTable, key, value)
 	if myTable and istable(myTable) then
 		if #myTable > 100000 then log(LOGGER.WARN, "Table") return end
 		if trueTableSize(myTable) > 100000 then return log(LOGGER.WARN, "trueTableSize in table.insert was too large!") end
@@ -289,19 +289,19 @@ _G.table.insert = detours.attach(table.insert,function(myTable, key, value)
 	return pureLuaInsert(myTable, key, value)
 end)
 
-_G.debug.getinfo = detours.attach(debug.getinfo,function(funcOrStackLevel, fields)
+_G.debug.getinfo = detours.attach(debug.getinfo, function(funcOrStackLevel, fields)
 	return __undetoured( detours.shadow(funcOrStackLevel), fields)
 end)
 
-_G.string.dump = detours.attach(string.dump,function(func, stripDebugInfo)
+_G.string.dump = detours.attach(string.dump, function(func, stripDebugInfo)
 	return __undetoured( detours.shadow(func), stripDebugInfo)
 end)
 
-_G.debug.getlocal = detours.attach(debug.getlocal,function(thread, level, index)
+_G.debug.getlocal = detours.attach(debug.getlocal, function(thread, level, index)
 	return __undetoured( detours.shadow(thread), (level or 0) + 1, index) -- Same as debug.getinfo
 end)
 
-_G.tostring = detours.attach(tostring,function(value)
+_G.tostring = detours.attach(tostring, function(value)
 	if type(value) == "CSoundPatch" then return false, "CSoundPatch" end
 	-- Prevent tostring crash with tostring(CreateSound(LocalPlayer(),''))
 	return __undetoured( detours.shadow(value) )
@@ -333,7 +333,7 @@ end)
 
 local JitCallbacks = {}
 
-_G.jit.attach = detours.attach(jit.attach,function(callback,event)
+_G.jit.attach = detours.attach(jit.attach, function(callback,event)
 	-- Attaches jit to a function so they can get constants and protos from it. We will give it the original function :)
 	JitCallbacks[callback] = event
 	return __undetoured( detours.shadow(callback), event )
@@ -348,24 +348,24 @@ end)
 	end
 end]]
 
-_G.jit.util.ircalladdr = detours.attach(jit.util.ircalladdr,function(index)
+_G.jit.util.ircalladdr = detours.attach(jit.util.ircalladdr, function(index)
 	return __undetoured(index)
 end)
 
-_G.jit.util.funcinfo = detours.attach(jit.util.funcinfo,function(func, pos) -- Function that is basically Debug.getinfo
+_G.jit.util.funcinfo = detours.attach(jit.util.funcinfo, function(func, pos) -- Function that is basically Debug.getinfo
 	return __undetoured( detours.shadow(func), pos )
 end)
 
-_G.jit.util.funcbc = detours.attach(jit.util.funcbc,function(func, pos)
+_G.jit.util.funcbc = detours.attach(jit.util.funcbc, function(func, pos)
 	return __undetoured( detours.shadow(func), pos )
 end)
 
-_G.jit.util.funck = detours.attach(jit.util.funck,function(func, index)
+_G.jit.util.funck = detours.attach(jit.util.funck, function(func, index)
 	-- Function that returns a constant from a lua function, throws an error in native c++ functions which we want here.
 	return __undetoured( detours.shadow(func), index )
 end)
 
-_G.jit.util.funcuvname = detours.attach(jit.util.funcuvname,function(func, index)
+_G.jit.util.funcuvname = detours.attach(jit.util.funcuvname, function(func, index)
 	return __undetoured( detours.shadow(func), index )
 end)
 
@@ -441,12 +441,12 @@ _G.setfenv = detours.attach(_G.setfenv, function(location, enviroment)
 	return __undetoured( detours.shadow(location), enviroment)
 end)
 
-_G.debug.setfenv = detours.attach(debug.setfenv,function(object,env)
+_G.debug.setfenv = detours.attach(debug.setfenv, function(object,env)
 	return __undetoured(object,env)
 end)
 
 
-_G.debug.getfenv = detours.attach(debug.getfenv,function(object)
+_G.debug.getfenv = detours.attach(debug.getfenv, function(object)
 	return __undetoured( detours.shadow(object) )
 end)
 
@@ -560,7 +560,7 @@ local LockedFileMeta = {
 
 LockedFileMeta.__index = LockedFileMeta
 
-_G.file.Open = detours.attach(file.Open,function(fileName, fileMode, path)
+_G.file.Open = detours.attach(file.Open, function(fileName, fileMode, path)
 	local fileobj = __undetoured(fileName, fileMode, path)
 	if not fileobj then return end
 	if isLockedPath(fileName) then
@@ -570,14 +570,14 @@ _G.file.Open = detours.attach(file.Open,function(fileName, fileMode, path)
 	return fileobj
 end)
 
-_G.file.Rename = detours.attach(file.Rename,function(orignalFileName, targetFileName)
+_G.file.Rename = detours.attach(file.Rename, function(orignalFileName, targetFileName)
 	if isLockedPath(orignalFileName) then
 		return log(LOGGER.WARN, "Someone tried to rename file [%s] with filename %s", orignalFileName, targetFileName)
 	end
 	return __undetoured(true, orignalFileName, targetFileName)
 end)
 
-_G.net.Start = detours.attach(net.Start,function(str, unreliable)
+_G.net.Start = detours.attach(net.Start, function(str, unreliable)
 	if BlacklistedNetMessages[str] then
 		return log(LOGGER.WARN, "Blocked net.Start('%s', %s)!", str, unreliable)
 	end
@@ -586,7 +586,7 @@ _G.net.Start = detours.attach(net.Start,function(str, unreliable)
 	return __undetoured(str,unreliable)
 end)
 
-_G.string.rep = detours.attach(string.rep,function(str,reps,separator)
+_G.string.rep = detours.attach(string.rep, function(str,reps,separator)
 	-- Max string.rep length is 1,000,000
 	local sep = separator or ""
 	local retlength = #str*reps + #sep*reps
@@ -594,19 +594,19 @@ _G.string.rep = detours.attach(string.rep,function(str,reps,separator)
 	return __undetoured(str,reps,sep)
 end)
 
-_G.ClientsideModel = detours.attach(_G.ClientsideModel,function(model,rendergroup)
+_G.ClientsideModel = detours.attach(_G.ClientsideModel, function(model,rendergroup)
 	if not isstring(model) then return end
 	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideModel with a .bsp model!") return end
 	return __undetoured(model,rendergroup)
 end)
 
-_G.ClientsideScene = detours.attach(_G.ClientsideScene,function(model,targetEnt)
+_G.ClientsideScene = detours.attach(_G.ClientsideScene, function(model,targetEnt)
 	if not isstring(model) then return end
 	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideScene with a .bsp model!") return end
 	return __undetoured(model,targetEnt)
 end)
 
-_G.ClientsideRagdoll = detours.attach(_G.ClientsideRagdoll,function(model,rendergroup)
+_G.ClientsideRagdoll = detours.attach(_G.ClientsideRagdoll, function(model,rendergroup)
 	if not isstring(model) then return end
 	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideRagdoll with a .bsp model!") return end
 	return __undetoured(model,rendergroup)
@@ -644,12 +644,12 @@ _G.game.CleanUpMap = detours.attach(game.CleanUpMap, function(dontSendToClients,
 	__undetoured(dontSendToClients or false, extraFilters)
 end)
 
-_G.gui.OpenURL = detours.attach(gui.OpenURL,function(url)
+_G.gui.OpenURL = detours.attach(gui.OpenURL, function(url)
 	-- TODO: Just add a url whitelist to this.
 	log( LOGGER.INFO, "Blocked gui.OpenURL('%s')", url )
 end)
 
-_G.gui.HideGameUI = detours.attach(gui.HideGameUI,function()
+_G.gui.HideGameUI = detours.attach(gui.HideGameUI, function()
 	log( LOGGER.INFO, "Blocked gui.HideGameUI" )
 end)
 
