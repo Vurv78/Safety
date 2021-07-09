@@ -557,23 +557,23 @@ _G.file.Delete = detours.attach(file.Delete, function(name)
 	log( LOGGER.WARN, "Someone attempted to delete file ["..name.."]" )
 end)
 
-local CamStack = {}
+local CamStack = 0
 
 local function pushCam()
 	return function(...)
-		CamStack[#CamStack+1] = true
+		CamStack = CamStack + 1
 		__undetoured(...)
 	end
 end
 
 local function popCam()
 	return function()
-		if #CamStack == 0 then
+		if CamStack == 0 then
 			-- https://github.com/Facepunch/garrysmod-issues/issues/1091
 			-- Solution also from StarfallEx
 			return log(LOGGER.WARN, "Attempted to pop cam without a valid context")
 		end
-		CamStack[#CamStack] = nil
+		CamStack = CamStack - 1
 		__undetoured()
 	end
 end
