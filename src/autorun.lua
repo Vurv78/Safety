@@ -22,8 +22,8 @@ local BlacklistedConCommands = {
 	"retry",
 	"startmovie",
 	"endmovie",
-	"playdemo",
-	"play",
+	"^playdemo$",
+	"^play$",
 	"bind",
 	"unbindall",
 	"exit",
@@ -150,8 +150,8 @@ local function Color( r, g, b, a ) -- Mini color function
 end
 
 local function getLocation(n)
-	local data = d_getinfo(n or 2, "S")
-	return data and data.source
+	local data = d_getinfo(n, "S")
+	return data and (data.source .. ":" .. n)
 end
 
 --- Todo make this palette not shit
@@ -180,7 +180,7 @@ local function log(urgency, ...)
 		alert(...)
 	end
 	-- Atrocious debug.getinfo spam
-	sautorun.log( d_format("[%s] -> ", urgency) .. d_format(...) .. " -> " .. getLocation(4) or getLocation(3) )
+	sautorun.log( d_format("[%s] -> ", urgency) .. d_format(...) .. " -> " .. ( getLocation(6) or getLocation(5) or getLocation(4) or getLocation(3) or getLocation(2) ) )
 end
 
 local function isMaliciousModel(mdl)
@@ -597,7 +597,7 @@ local function fileMethod(ret)
 end
 
 local function isLockedPath(path)
-	for blocked_path in pairs(BlockedPaths) do
+	for _, blocked_path in ipairs(BlockedPaths) do
 		if d_stringfind(path, blocked_path) then
 			return true
 		end
