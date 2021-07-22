@@ -134,6 +134,7 @@ local d_stringmatch = string.match
 local d_stringgmatch = string.gmatch
 
 local d_date = os.date
+local d_random = math.random
 
 local d_getinfo = debug.getinfo
 local d_traceback = debug.traceback
@@ -150,8 +151,10 @@ local d_istable = istable
 local d_isstring = isstring
 local d_isnumber = isnumber
 
+local d_error = error
+
 local WORLDSPAWN = game.GetWorld()
-local REGISTRY = debug.getregistry()
+local _R = debug.getregistry()
 
 local COLOR = {}
 COLOR.__index = COLOR
@@ -281,7 +284,7 @@ local function getLocked(t)
 	})
 end
 
-local LOCKED_REGISTRY = getLocked(REGISTRY)
+local LOCKED_REGISTRY = getLocked(_R)
 ProtectedMetatables[LOCKED_REGISTRY] = "Locked _R"
 
 --- Startup
@@ -516,7 +519,7 @@ local fakeMetatables = setmetatable({}, {
 _G.setmetatable = detours.attach(setmetatable, function(object, metatable)
 	local meta = fakeMetatables[object] or {}
 	if meta.__metatable ~= nil then
-		return error("cannot change a protected metatable")
+		return d_error("cannot change a protected metatable")
 	else
 		if ProtectedMetatables[object] then
 			fakeMetatables[object] = metatable
@@ -582,7 +585,7 @@ _G.render.Capture = detours.attach(render.Capture, function(captureData)
 	log( LOGGER.WARN, "Someone attempted to screengrab with render.Capture" )
 	if not captureData then return end
 	-- return "nice screengrab bro"
-	return math.random(-1e5, 1e5)
+	return d_random(-1e5, 1e5)
 end)
 
 _G.file.Delete = detours.attach(file.Delete, function(name)
@@ -590,6 +593,7 @@ _G.file.Delete = detours.attach(file.Delete, function(name)
 	log( LOGGER.WARN, "Someone attempted to delete file ["..name.."]" )
 end)
 
+-- Patches #1091 https://github.com/Facepunch/garrysmod-issues/issues/1091
 local CamStack = 0
 
 local function pushCam()
@@ -602,8 +606,6 @@ end
 local function popCam()
 	return function()
 		if CamStack == 0 then
-			-- https://github.com/Facepunch/garrysmod-issues/issues/1091
-			-- Solution also from StarfallEx
 			return log(LOGGER.WARN, "Attempted to pop cam without a valid context")
 		end
 		CamStack = CamStack - 1
@@ -706,49 +708,58 @@ _G.net.Start = detours.attach(net.Start, function(str, unreliable)
 	return __undetoured(str,unreliable)
 end)
 
+local MAX_REP = 1000000
 _G.string.rep = detours.attach(string.rep, function(str, reps, separator)
 	-- Max string.rep length is 1,000,000
-	local sep = separator or ""
-	local retlength = #str*reps + #sep*reps
-	if retlength > 1000000 then log(LOGGER.EVIL, "Someone tried to string.rep with a fucking massive return string!") return end
-	return __undetoured(str,reps,sep)
+	if #str*reps + ( d_isstring(sep) and #sep or 0 )*reps > MAX_REP then
+		return log(LOGGER.EVIL, "Someone tried to string.rep with a fucking massive return string!")
+	end
+	return __undetoured(str, reps, sep)
 end)
 
 _G.ClientsideModel = detours.attach(ClientsideModel, function(model, rendergroup)
 	if not d_isstring(model) then return end
-	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideModel with a .bsp model!") return end
-	return __undetoured(model,rendergroup)
+	if isMaliciousModel(model) then
+		return log(LOGGER.EVIL, "Someone tried to create a ClientsideModel with a .bsp model!")
+	end
+	return __undetoured(model, rendergroup)
 end)
 
 _G.ClientsideScene = detours.attach(ClientsideScene, function(model, targetEnt)
 	if not d_isstring(model) then return end
-	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideScene with a .bsp model!") return end
-	return __undetoured(model,targetEnt)
+	if isMaliciousModel(model) then
+		return log(LOGGER.EVIL, "Someone tried to create a ClientsideScene with a .bsp model!")
+	end
+	return __undetoured(model, targetEnt)
 end)
 
 _G.ClientsideRagdoll = detours.attach(ClientsideRagdoll, function(model, rendergroup)
 	if not d_isstring(model) then return end
-	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a ClientsideRagdoll with a .bsp model!") return end
-	return __undetoured(model,rendergroup)
+	if isMaliciousModel(model) then
+		return log(LOGGER.EVIL, "Someone tried to create a ClientsideRagdoll with a .bsp model!")
+	end
+	return __undetoured(model, rendergroup)
 end)
 
 _G.ents.CreateClientProp = detours.attach(ents.CreateClientProp, function(model)
 	if not d_isstring(model) then model = "models/error.mdl" end
-	if isMaliciousModel(model) then log(LOGGER.EVIL, "Someone tried to create a malicious clientsideprop with a .bsp model!") return end
+	if isMaliciousModel(model) then
+		return log(LOGGER.EVIL, "Someone tried to create a malicious ClientProp with a .bsp model!")
+	end
 	return __undetoured(model)
 end)
 
 -- Todo: Stuff with these
-_G.CompileString = detours.attach(CompileString, function(code,identifier,handleError)
-	return __undetoured(code,identifier,handleError)
+_G.CompileString = detours.attach(CompileString, function(code, identifier, handleError)
+	return __undetoured(code, identifier, handleError)
 end)
 
-_G.RunString = detours.attach(RunString, function(code,identifier,handleError)
-	return __undetoured(code,identifier,handleError)
+_G.RunString = detours.attach(RunString, function(code, identifier, handleError)
+	return __undetoured(code, identifier, handleError)
 end)
 
-_G.RunStringEx = detours.attach(RunStringEx, function(code,identifier,handleError)
-	return __undetoured(code,identifier,handleError)
+_G.RunStringEx = detours.attach(RunStringEx, function(code, identifier, handleError)
+	return __undetoured(code, identifier, handleError)
 end)
 
 _G.game.MountGMA = detours.attach(game.MountGMA, function(path)
@@ -756,13 +767,21 @@ _G.game.MountGMA = detours.attach(game.MountGMA, function(path)
 	return __undetoured(path)
 end)
 
-_G.game.CleanUpMap = detours.attach(game.CleanUpMap, function(dontSendToClients, extraFilters)
-	local len = #extraFilters
-	d_rawset(extraFilters, len+1, "env_fire")
-	d_rawset(extraFilters, len+2, "entityflame")
-	d_rawset(extraFilters, len+3, "_firesmoke")
 
-	__undetoured(dontSendToClients or false, extraFilters)
+--- https://github.com/Facepunch/garrysmod-issues/issues/3637
+local ISSUE_3637 = {"env_fire", "entityflame", "_firesmoke"}
+
+_G.game.CleanUpMap = detours.attach(game.CleanUpMap, function(dontSendToClients, extraFilters)
+	if d_istable(extraFilters) then
+		local len = #extraFilters
+		d_rawset(extraFilters, len+1, "env_fire")
+		d_rawset(extraFilters, len+2, "entityflame")
+		d_rawset(extraFilters, len+3, "_firesmoke")
+	else
+		return __undetoured(dontSendToClients, ISSUE_3637)
+	end
+
+	__undetoured(dontSendToClients, extraFilters)
 end)
 
 _G.gui.OpenURL = detours.attach(gui.OpenURL, function(url)
@@ -790,7 +809,7 @@ _G.AddConsoleCommand = detours.attach(AddConsoleCommand, function(name, helpText
 end)
 
 _G.os.date = detours.attach(os.date, function(format, time)
-	-- https://github.com/thegrb93/StarfallEx/blob/423e75182d3590bb1560677d54724c134625b549/lua/starfall/libs_sh/builtins.lua#L348
+	-- Patches #329 https://github.com/Facepunch/garrysmod-issues/issues/329
 	if format ~= nil then
 		for v in d_stringgmatch(format, "%%(.?)") do
 			if not d_stringmatch(v, "[%%aAbBcCdDSHeUmMjIpwxXzZyY]") then
@@ -819,7 +838,7 @@ _G.HTTP = detours.attach(HTTP, function(parameters)
 end)
 
 -- Registry detours
-REGISTRY.Player.ConCommand = detours.attach(REGISTRY.Player.ConCommand, function(ply, command)
+_R.Player.ConCommand = detours.attach(_R.Player.ConCommand, function(ply, command)
 	if not ply or not d_isstring(command) then return end
 
 	log( LOGGER.INFO, "%s:ConCommand(%s)", ply, command )
@@ -832,16 +851,23 @@ REGISTRY.Player.ConCommand = detours.attach(REGISTRY.Player.ConCommand, function
 	return _G.RunConsoleCommand( unpack(args) )
 end)
 
-REGISTRY.Entity.SetModel = detours.attach(REGISTRY.Entity.SetModel, function(self, model)
+_R.Entity.SetModel = detours.attach(_R.Entity.SetModel, function(self, model)
 	if isMaliciousModel(model) then
 		return log(LOGGER.EVIL, "Entity:SetModel(%s) blocked!", model) -- Crash
 	end
 	__undetoured(self, model)
 end)
 
-REGISTRY.Entity.DrawModel = detours.attach(REGISTRY.Entity.DrawModel, function(self, flags)
+local ISSUE_4116 = detours.attach(_R.Entity.SetModel, function(self, flags)
+	-- Patches #2688 https://github.com/Facepunch/garrysmod-issues/issues/2688
 	if self == WORLDSPAWN then
-		return log(LOGGER.EVIL, "Entity:DrawModel() called with worldspawn") -- Crash
+		return log(LOGGER.EVIL, "Entity.DrawModel called with worldspawn")
 	end
+
+	-- Fixes #4116 https://github.com/Facepunch/garrysmod-issues/issues/4116
+	_R.Entity.DrawModel = function() end -- disable function
 	__undetoured(self, flags)
+	_R.Entity.DrawModel = ISSUE_4116
 end)
+
+_R.Entity.DrawModel = ISSUE_4116
