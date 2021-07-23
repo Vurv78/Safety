@@ -851,11 +851,12 @@ _R.Player.ConCommand = detours.attach(_R.Player.ConCommand, function(ply, comman
 	return _G.RunConsoleCommand( unpack(args) )
 end)
 
-_R.Entity.SetModel = detours.attach(_R.Entity.SetModel, function(self, model)
-	if isMaliciousModel(model) then
-		return log(LOGGER.EVIL, "Entity:SetModel(%s) blocked!", model) -- Crash
+_R.Entity.SetModel = detours.attach(_R.Entity.SetModel, function(self, modelName)
+	if not d_isstring(modelName) then return end
+	if isMaliciousModel(modelName) then
+		return log(LOGGER.EVIL, "Entity:SetModel(%s) blocked!", modelName) -- Crash
 	end
-	__undetoured(self, model)
+	__undetoured(self, modelName)
 end)
 
 local ISSUE_4116 = detours.attach(_R.Entity.SetModel, function(self, flags)
