@@ -24,18 +24,29 @@ local BlockedPaths = {
 local BlacklistedConCommands = {
 	"voicerecord",
 	"retry",
-	"startmovie",
-	"endmovie",
+	"^startmovie$",
+	"^endmovie$",
 	"^playdemo$",
 	"^play$",
 	"bind",
 	"unbindall",
 	"exit",
 	"fov",
+	"^cl_timeout$",
+	"screenshot",
+	"^mat_specular$",
 	"sendrcon",
-	"cl_timeout",
-	"screenshot requested",
-	"screenshot"
+
+	-- Credit to banksy for these
+	"^ping$",
+	"^record$",
+	"^jpeg$",
+	"^kickme$",
+	"^imafaggot$",
+	"^Progress$",
+	"^ScreengrabRequest",
+	"^achievementRefresh$",
+	"^gmod_mcore_test$"
 }
 
 -- Bad Net Messages to use with net.Start, prevent them from executing. Checks equality
