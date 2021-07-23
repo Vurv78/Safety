@@ -902,7 +902,7 @@ _R.Entity.SetModel = detours.attach(_R.Entity.SetModel, function(self, modelName
 end)
 
 local ISSUE_4116
-ISSUE_4116 = detours.attach(_R.Entity.SetModel, function(self, flags)
+ISSUE_4116 = detours.attach(_R.Entity.DrawModel, function(self, flags)
 	-- Patches #2688 https://github.com/Facepunch/garrysmod-issues/issues/2688
 	if self == WORLDSPAWN then
 		return log(LOGGER.EVIL, "Entity.DrawModel called with worldspawn")
