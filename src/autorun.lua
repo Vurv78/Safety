@@ -10,7 +10,8 @@
 ---@diagnostic disable:undefined-global
 ---@diagnostic disable:undefined-field
 
--- Files to hide in file reading and writing. If a path contains any of these keywords, it will be blocked. Uses string.find
+-- Files to hide in file reading and writing / lock.
+-- If a path contains any of these keywords, it will be blocked. Uses string.find
 local BlockedPaths = {
 	"sf_filedata",
 	"e2files",
@@ -19,7 +20,7 @@ local BlockedPaths = {
 }
 
 -- Commands to not let execute in RunConsoleCommand.
--- Ply:ConCommand will also use these.
+-- Ply:ConCommand will also use these. (These are lua patterns)
 local BlacklistedConCommands = {
 	"voicerecord",
 	"retry",
@@ -145,6 +146,7 @@ local d_setmetatable = debug.setmetatable
 local d_getmetatable = debug.getmetatable
 local d_pairs = pairs
 local d_ipairs = ipairs
+local d_unpack = unpack
 
 local d_type = type
 local d_istable = istable
@@ -244,12 +246,14 @@ local function trueTableSize(t, done)
 	local sz = 0
 	sz = sz + #t
 	done = done or { t }
-	for k, v in pairs(t) do
+	for k, v in d_pairs(t) do
 		if not done[v] then
 			done[v] = true
+			done[k] = true
 			if d_istable(k) then sz = sz + trueTableSize(k, done) end
 			if d_istable(v) then sz = sz + trueTableSize(v, done) end
 			done[v] = nil
+			done[k] = nil
 		end
 	end
 	return sz
@@ -273,7 +277,7 @@ end
 ---@param t table
 ---@return table locked_version
 local function getLocked(t)
-	return setmetatable({}, {
+	return d_setmetatable({}, {
 		__index = t,
 		__newindex = function(_, k, v)
 			-- Do not allow overwriting, which could cause crashes.
@@ -347,7 +351,7 @@ end
 ]]
 
 local begunMeshes = {}
-setmetatable(begunMeshes, {
+d_setmetatable(begunMeshes, {
 	__mode = "k"
 })
 
@@ -436,22 +440,22 @@ _G.string.format = detours.attach(string.format, function(format, ...)
 		log( LOGGER.INFO, "Detoured string.format('%s', ...)", format )
 	end
 
-	return __undetoured( format, unpack(T) )
+	return __undetoured( format, d_unpack(T) )
 end)
 
 
 _G.print = detours.attach(print, function(...)
 	local t = {...}
-	for k, arg in pairs(t) do
+	for k, arg in d_pairs(t) do
 		t[k] = detours.shadow(arg) -- Won't log detouring
 	end
-	return __undetoured( unpack(t) )
+	return __undetoured( d_unpack(t) )
 end)
 
 local JitCallbacks = {}
 
 _G.jit.attach = detours.attach(jit.attach, function(callback, event)
-	-- Attaches jit to a function so they can get constants and protos from it. We will give it the original function :)
+	-- Attaches jit to a function so they can get constants and protos from it. We will give it the original function.
 	JitCallbacks[callback] = event
 	return __undetoured( detours.shadow(callback), event )
 end)
@@ -512,7 +516,7 @@ _G.debug.gethook = detours.attach(debug.gethook, function(thread)
 	return __undetoured(thread)
 end)
 
-local fakeMetatables = setmetatable({}, {
+local fakeMetatables = d_setmetatable({}, {
 	__mode = "k"
 })
 
