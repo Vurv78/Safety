@@ -142,8 +142,12 @@ local d_traceback = debug.traceback
 
 local d_rawget = rawget
 local d_rawset = rawset
-local d_setmetatable = debug.setmetatable
-local d_getmetatable = debug.getmetatable
+
+local d_setmetatable = setmetatable
+local d_objsetmetatable = debug.setmetatable
+--local d_getmetatable = debug.getmetatable
+local d_objgetmetatable = debug.getmetatable
+
 local d_pairs = pairs
 local d_ipairs = ipairs
 local d_unpack = unpack
@@ -153,6 +157,8 @@ local d_istable = istable
 local d_isstring = isstring
 local d_isnumber = isnumber
 
+local d_collectgarbage = collectgarbage
+local d_gcinfo = gcinfo
 local d_error = error
 
 local WORLDSPAWN = game.GetWorld()
@@ -265,7 +271,7 @@ end
 ---@return boolean mostly_copied
 local function isTableMostlyCopied(t, t2)
 	if not d_istable(t) or not d_istable(t2) then return false end
-	if d_getmetatable(t) ~= d_getmetatable(t2) then return false end
+	if d_objgetmetatable(t) ~= d_objgetmetatable(t2) then return false end
 
 	for k, v in d_pairs(t) do
 		if t2[k] ~= v then return false end
@@ -490,6 +496,27 @@ _G.jit.util.funcuvname = detours.attach(jit.util.funcuvname, function(func, inde
 	return __undetoured( detours.shadow(func), index )
 end)
 
+local SAFETY_MEMUSED
+local function memcounter()
+	local out = d_gcinfo()
+	if SAFETY_MEMUSED then
+		return out - SAFETY_MEMUSED
+	end
+	return out
+end
+
+_G.gcinfo = detours.attach(gcinfo, function()
+	-- Incase in another function to avoid equality with collectgarbage
+	return memcounter()
+end)
+
+_G.collectgarbage = detours.attach(collectgarbage, function(action, arg)
+	if action == "count" then
+		return memcounter()
+	end
+	return __undetoured( action, arg )
+end)
+
 --[[
 	Lua Hooks
 ]]
@@ -691,7 +718,7 @@ _G.file.Open = detours.attach(file.Open, function(fileName, fileMode, path)
 	if not fileobj then return end
 	if isLockedPath(fileName) then
 		log( LOGGER.INFO, "Locked file created! %s", fileName )
-		d_setmetatable(fileobj, LockedFileMeta)
+		d_objsetmetatable(fileobj, LockedFileMeta)
 	end
 	return fileobj
 end)
@@ -863,7 +890,8 @@ _R.Entity.SetModel = detours.attach(_R.Entity.SetModel, function(self, modelName
 	__undetoured(self, modelName)
 end)
 
-local ISSUE_4116 = detours.attach(_R.Entity.SetModel, function(self, flags)
+local ISSUE_4116
+ISSUE_4116 = detours.attach(_R.Entity.SetModel, function(self, flags)
 	-- Patches #2688 https://github.com/Facepunch/garrysmod-issues/issues/2688
 	if self == WORLDSPAWN then
 		return log(LOGGER.EVIL, "Entity.DrawModel called with worldspawn")
@@ -876,3 +904,5 @@ local ISSUE_4116 = detours.attach(_R.Entity.SetModel, function(self, flags)
 end)
 
 _R.Entity.DrawModel = ISSUE_4116
+
+SAFETY_MEMUSED = d_collectgarbage("count")
