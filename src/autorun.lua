@@ -173,7 +173,7 @@ COLOR.__index = COLOR
 ---@param a number?
 ---@return Color
 local function Color( r, g, b, a ) -- Mini color function
-	return setmetatable( {r = r, g = g, b = b, a = a or 255}, COLOR )
+	return d_setmetatable( {r = r, g = g, b = b, a = a or 255}, COLOR )
 end
 
 local function getLocation(n)
@@ -309,7 +309,7 @@ local d_setfenv = _G.setfenv
 ---@param replace_with function Func to return
 ---@return function hooked Hooked function that was given in ``replace_with``
 function detours.attach( target, replace_with )
-	local env = setmetatable({ __undetoured = target },{
+	local env = d_setmetatable({ __undetoured = target },{
 		__index = _G,
 		__newindex = _G
 	})
