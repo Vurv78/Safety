@@ -121,19 +121,6 @@ local URLWhitelist = {
 	simple [[google.com]],
 }
 
---[[
-	Make sure debug.getinfo(1).name and .namewhat don't appear
-
-	jit.util.traceir
-	jit.util.tracek
-	jit.util.tracemc
-	jit.util.tracesnap
-	collectgarbage
-	gcinfo
-
-	Detour vgui functions
-]]
-
 local ProtectedMetatables = {
 	[_G] = "_G",
 	[debug.getregistry()] = "_R"
@@ -182,12 +169,12 @@ COLOR.__index = COLOR
 ---@field r number
 ---@field g number
 ---@field b number
----@field a number?
+---@field a number|nil
 
 ---@param r number
 ---@param g number
 ---@param b number
----@param a number?
+---@param a number|nil
 ---@return Color
 local function Color( r, g, b, a ) -- Mini color function
 	return d_setmetatable( {r = r, g = g, b = b, a = a or 255}, COLOR )
@@ -214,18 +201,23 @@ local function alert(...)
 end
 
 local LOGGER = {
-	WARN = "WARN",
-	INFO = "INFO",
-	EVIL = "EVIL"
+	ERROR = 1,
+	WARN = 2,
+	INFO = 3,
+	DEBUG = 4,
+	TRACE = 5
 }
 
 ---@param urgency string
 local function log(urgency, ...)
-	if urgency == LOGGER.EVIL then
+	if urgency <= LOGGER.WARN then
 		alert(...)
 	end
 	-- Atrocious debug.getinfo spam
-	sautorun.log( d_format("[%s] -> ", urgency) .. d_format(...) .. " -> " .. ( getLocation(6) or getLocation(5) or getLocation(4) or getLocation(3) or getLocation(2) ) )
+	sautorun.log(
+		d_format(...) .. " -> " .. ( getLocation(6) or getLocation(5) or getLocation(4) or getLocation(3) or getLocation(2) ),
+		urgency
+	)
 end
 
 ---@param mdl string
@@ -257,7 +249,7 @@ end
 --- Returns the true size of a table, including the size of tables inside of that table.
 --- Should be safe from infinite recursion.
 ---@param t table
----@param done table?
+---@param done table|nil
 ---@return number table_size
 local function trueTableSize(t, done)
 	local sz = 0
@@ -349,7 +341,7 @@ end
 -- Else returns ``val``
 ---@param val function Function to check. Can actually be any type though.
 ---@return function original Unhooked value or function.
----@return boolean #Was the value hooked?
+---@return boolean Was the value hooked?
 function detours.shadow( val )
 	local v = detours.list[val]
 	if v then
@@ -386,7 +378,7 @@ _G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(command, ...)
 			return log( LOGGER.WARN, "Found blacklisted cmd ['%s'] being executed with RunConsoleCommand", command )
 		end
 	end
-	log(LOGGER.INFO, "RunConsoleCommand(%s)", command)
+	log(LOGGER.TRACE, "RunConsoleCommand(%s)", command)
 	return __undetoured(command, ...)
 end)
 
@@ -394,15 +386,15 @@ end)
 local function pureLuaInsert(tab, key, val)
 	if not d_istable(tab) then return end
 
-	if val~=nil then
+	if val ~= nil then
 		if not d_isnumber(key) then return end
 		for k = #tab, key, -1 do
-			tab[k+1] = tab[k]
+			tab[k + 1] = tab[k]
 		end
 		d_rawset(tab, key, val)
 		return key
 	elseif key ~= nil then
-		local ind = #tab+1
+		local ind = #tab + 1
 		d_rawset(tab, ind, key)
 		return ind
 	end
@@ -413,9 +405,9 @@ _G.table.insert = detours.attach(table.insert, function(myTable, key, value)
 	if myTable and d_istable(myTable) then
 		if #myTable > 100000 then log(LOGGER.WARN, "Table") return end
 		if trueTableSize(myTable) > 100000 then return log(LOGGER.WARN, "trueTableSize in table.insert was too large!") end
-		if d_istable(value) and isTableMostlyCopied(myTable, value) then return log(LOGGER.WARN, "Copied table found in table.insert, lag/crash attempt?") end
+		if d_istable(value) and isTableMostlyCopied(myTable, value) then return log(LOGGER.INFO, "Copied table found in table.insert, lag/crash attempt?") end
 	end
-	if value~=nil and d_isnumber(key) and key > 2^31-1 then return log(LOGGER.WARN, "table.insert with massive key!") end
+	if value ~= nil and d_isnumber(key) and key > 2^31-1 then return log(LOGGER.WARN, "table.insert with massive key!") end
 	return pureLuaInsert(myTable, key, value)
 end)
 
@@ -533,7 +525,7 @@ end)
 ]]
 
 -- Function, mask, count
-local HookList = {
+local _HookList = {
 	current = {}
 }
 
@@ -632,7 +624,7 @@ end)
 
 _G.file.Delete = detours.attach(file.Delete, function(name)
 	if not name then return end
-	log( LOGGER.WARN, "Someone attempted to delete file ["..name.."]" )
+	log( LOGGER.WARN, "Someone attempted to delete file [" .. name .. "]" )
 end)
 
 -- Patches #1091 https://github.com/Facepunch/garrysmod-issues/issues/1091
@@ -676,7 +668,7 @@ local function fileMethod(ret)
 end
 
 ---@param path string Path to check
----@return boolean #If the file at the path is not allowed to be accessed.
+---@return boolean If the file at the path is not allowed to be accessed.
 local function isLockedPath(path)
 	for _, blocked_path in ipairs(BlockedPaths) do
 		if d_stringfind(path, blocked_path) then
@@ -743,9 +735,9 @@ end)
 
 _G.net.Start = detours.attach(net.Start, function(str, unreliable)
 	if BlacklistedNetMessages[str] then
-		return log(LOGGER.WARN, "Blocked net.Start('%s', %s)!", str, unreliable)
+		return log(LOGGER.INFO, "Blocked net.Start('%s', %s)!", str, unreliable)
 	end
-	log( LOGGER.INFO, "net.Start(%s, %s)", str, unreliable )
+	log( LOGGER.TRACE, "net.Start(%s, %s)", str, unreliable )
 
 	return __undetoured(str,unreliable)
 end)
@@ -753,7 +745,7 @@ end)
 local MAX_REP = 1000000
 _G.string.rep = detours.attach(string.rep, function(str, reps, separator)
 	-- Max string.rep length is 1,000,000
-	if #str*reps + ( d_isstring(sep) and #sep or 0 )*reps > MAX_REP then
+	if #str * reps + ( d_isstring(sep) and #sep or 0 ) * reps > MAX_REP then
 		return log(LOGGER.EVIL, "Someone tried to string.rep with a fucking massive return string!")
 	end
 	return __undetoured(str, reps, sep)
@@ -816,9 +808,9 @@ local ISSUE_3637 = {"env_fire", "entityflame", "_firesmoke"}
 _G.game.CleanUpMap = detours.attach(game.CleanUpMap, function(dontSendToClients, extraFilters)
 	if d_istable(extraFilters) then
 		local len = #extraFilters
-		d_rawset(extraFilters, len+1, "env_fire")
-		d_rawset(extraFilters, len+2, "entityflame")
-		d_rawset(extraFilters, len+3, "_firesmoke")
+		d_rawset(extraFilters, len + 1, "env_fire")
+		d_rawset(extraFilters, len + 2, "entityflame")
+		d_rawset(extraFilters, len + 3, "_firesmoke")
 	else
 		return __undetoured(dontSendToClients, ISSUE_3637)
 	end
@@ -887,7 +879,7 @@ _R.Player.ConCommand = detours.attach(_R.Player.ConCommand, function(ply, comman
 
 	local args = {}
 	for arg in d_stringgmatch(command, "[^%s]+") do
-		args[#args+1] = arg
+		args[#args + 1] = arg
 	end
 
 	return _G.RunConsoleCommand( unpack(args) )
