@@ -156,8 +156,9 @@ local d_isstring = isstring
 local d_isnumber = isnumber
 
 local d_collectgarbage = collectgarbage
-local d_gcinfo = gcinfo
 local d_error = error
+local d_select = select
+local d_concat = table.concat
 
 local WORLDSPAWN = game.GetWorld()
 local _R = debug.getregistry()
@@ -300,6 +301,39 @@ end
 local LOCKED_REGISTRY = getLocked(_R)
 ProtectedMetatables[LOCKED_REGISTRY] = "Locked _R"
 
+local function error_fmt(level, msg, ...)
+	d_error( d_format(msg, ...), level + 1 )
+end
+
+local TYPE_NUMBER = "number"
+local TYPE_TABLE = "table"
+local TYPE_THREAD = "thread"
+local TYPE_FUNCTION = "function"
+
+-- https://github.com/LuaJIT/LuaJIT/blob/4deb5a1588ed53c0c578a343519b5ede59f3d928/src/lj_errmsg.h
+
+--- Checks the arguments of a function.
+--- Last arg is vararg expected types, which may include nil.
+---@param val any
+---@param argnum number
+---@param func_name string
+local function checkargtype(val, argnum, func_name, ...)
+	local expected_types = {}
+	local t = d_type(val)
+	local count = d_select('#', ...) or "nil"
+	for i in count do
+		local expected = d_select(i, ...)
+		if t == expected then
+			return
+		end
+		expected_types[i] = expected
+	end
+	local expected_str = d_concat(expected_types, " or ")
+	if t ~= expected then
+		error_fmt(2, "bad argument #%d to '%s' (%s expected%s)", argnum, func_name, expected_str, count == 1 and d_format(", got %s", t) or "")
+	end
+end
+
 --- Startup
 
 jit.off()
@@ -402,12 +436,20 @@ end
 
 -- This doesn't call the __newindex metamethod, so we need to patrol this func as well.
 _G.table.insert = detours.attach(table.insert, function(myTable, key, value)
-	if myTable and d_istable(myTable) then
-		if #myTable > 100000 then log(LOGGER.WARN, "Table") return end
-		if trueTableSize(myTable) > 100000 then return log(LOGGER.WARN, "trueTableSize in table.insert was too large!") end
-		if d_istable(value) and isTableMostlyCopied(myTable, value) then return log(LOGGER.INFO, "Copied table found in table.insert, lag/crash attempt?") end
+	checkargtype(myTable, 1, "insert", TYPE_TABLE)
+
+	if value ~= nil then
+		checkargtype(key, 2, "insert", TYPE_NUMBER)
+		if key > 2^31-1 then
+			log(LOGGER.WARN, "table.insert with massive key!")
+			return key
+		end
 	end
-	if value ~= nil and d_isnumber(key) and key > 2^31-1 then return log(LOGGER.WARN, "table.insert with massive key!") end
+
+	if #myTable > 100000 then log(LOGGER.WARN, "Table") return end
+	if trueTableSize(myTable) > 100000 then return log(LOGGER.WARN, "trueTableSize in table.insert was too large!") end
+	if d_istable(value) and isTableMostlyCopied(myTable, value) then return log(LOGGER.INFO, "Copied table found in table.insert, lag/crash attempt?") end
+
 	return pureLuaInsert(myTable, key, value)
 end)
 
@@ -416,6 +458,7 @@ _G.debug.getinfo = detours.attach(debug.getinfo, function(funcOrStackLevel, fiel
 end)
 
 _G.string.dump = detours.attach(string.dump, function(func, stripDebugInfo)
+	checkargtype(func, 1, "dump", TYPE_FUNCTION)
 	return __undetoured( detours.shadow(func), stripDebugInfo)
 end)
 
@@ -456,7 +499,7 @@ end)
 _G.print = detours.attach(print, function(...)
 	local t = {...}
 	for k, arg in d_pairs(t) do
-		t[k] = detours.shadow(arg) -- Won't log detouring
+		t[k] = detours.shadow(arg)
 	end
 	return __undetoured( d_unpack(t) )
 end)
@@ -465,18 +508,13 @@ local JitCallbacks = {}
 
 _G.jit.attach = detours.attach(jit.attach, function(callback, event)
 	-- Attaches jit to a function so they can get constants and protos from it. We will give it the original function.
-	JitCallbacks[callback] = event
-	return __undetoured( detours.shadow(callback), event )
-end)
+	checkargtype(callback, 1, "attach", TYPE_FUNCTION)
 
--- cool
---[[_G.jit.deattach = function()
-	for Callback,Event in pairs(JitCallbacks) do
-		d_jitattach(Callback)
-		JitCallbacks[Callback] = nil
-		printf("Unhooked jit.attach %s",Event)
-	end
-end]]
+	JitCallbacks[callback] = event
+	return __undetoured( function(a)
+		detours.shadow(callback)( detours.shadow(a) )
+	end, event )
+end)
 
 _G.jit.util.ircalladdr = detours.attach(jit.util.ircalladdr, function(index)
 	return __undetoured(index)
@@ -501,14 +539,15 @@ end)
 
 local SAFETY_MEMUSED
 local function memcounter()
-	local out = d_gcinfo()
+	local out = collectgarbage("count")
 	if SAFETY_MEMUSED then
 		return out - SAFETY_MEMUSED
 	end
 	return out
 end
 
-_G.gcinfo = detours.attach(gcinfo, function()
+-- Using string indexing so gluafixer doesn't cry about gcinfo
+_G["gcinfo"] = detours.attach(_G["gcinfo"], function()
 	-- Incase in another function to avoid equality with collectgarbage
 	return memcounter()
 end)
@@ -550,23 +589,31 @@ local fakeMetatables = d_setmetatable({}, {
 	__mode = "k"
 })
 
-_G.setmetatable = detours.attach(setmetatable, function(object, metatable)
-	local meta = fakeMetatables[object] or {}
+_G.setmetatable = detours.attach(setmetatable, function(tab, metatable)
+	checkargtype(tab, 1, "setmetatable", TYPE_TABLE)
+	checkargtype(metatable, 2, "setmetatable", nil, TYPE_TABLE)
+
+	local meta = fakeMetatables[tab] or {}
 	if meta.__metatable ~= nil then
 		return d_error("cannot change a protected metatable")
 	else
-		if ProtectedMetatables[object] then
-			fakeMetatables[object] = metatable
-			return log(LOGGER.WARN, "Denied [set] access to protected metatable '%s'", ProtectedMetatables[object])
+		if ProtectedMetatables[tab] then
+			fakeMetatables[tab] = metatable
+			log(LOGGER.WARN, "Denied [set] access to protected metatable '%s'", ProtectedMetatables[tab])
+			return tab
 		end
-		return __undetoured( detours.shadow(object), metatable )
+		__undetoured( detours.shadow(tab), metatable )
+		return tab
 	end
 end)
 
 _G.debug.setmetatable = detours.attach(debug.setmetatable, function(object, metatable)
+	checkargtype(metatable, 2, "setmetatable", nil, TYPE_TABLE)
+
 	if ProtectedMetatables[object] then
 		fakeMetatables[object] = metatable -- To pretend it actually got set.
-		return log(LOGGER.WARN, "Denied [set, debug] access to protected metatable '%s'", ProtectedMetatables[object])
+		log(LOGGER.WARN, "Denied [set, debug] access to protected metatable '%s'", ProtectedMetatables[object])
+		return true
 	end
 	return __undetoured( detours.shadow(object), metatable )
 end)
@@ -594,8 +641,9 @@ _G.setfenv = detours.attach(setfenv, function(location, enviroment)
 	return __undetoured( detours.shadow(location), enviroment)
 end)
 
-_G.debug.setfenv = detours.attach(debug.setfenv, function(object,env)
-	return __undetoured(object,env)
+_G.debug.setfenv = detours.attach(debug.setfenv, function(object, env)
+	checkargtype(env, 2, "setfenv", TYPE_TABLE)
+	return __undetoured(object, env)
 end)
 
 
@@ -612,6 +660,10 @@ _G.debug.getregistry = detours.attach(debug.getregistry, function()
 end)
 
 _G.debug.getupvalue = detours.attach(debug.getupvalue, function(func, index)
+	-- It checked in this order for me. I don't know why.
+	checkargtype(index, 2, "getupvalue", TYPE_NUMBER)
+	checkargtype(func, 1, "getupvalue", TYPE_FUNCTION)
+
 	return __undetoured( detours.shadow(func), index )
 end)
 
@@ -623,7 +675,7 @@ _G.render.Capture = detours.attach(render.Capture, function(captureData)
 end)
 
 _G.file.Delete = detours.attach(file.Delete, function(name)
-	if not name then return end
+	checkargtype(name, 1, "Delete", TYPE_STRING)
 	log( LOGGER.WARN, "Someone attempted to delete file [" .. name .. "]" )
 end)
 
