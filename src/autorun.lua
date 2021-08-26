@@ -36,6 +36,10 @@ local BlacklistedConCommands = {
 	"screenshot",
 	"^mat_specular$",
 	"sendrcon",
+	"^showscores$",
+	"^disconnect$",
+	"^developer$",
+	"^_restart$",
 
 	-- Credit to banksy for these
 	"^ping$",
@@ -307,6 +311,7 @@ end
 
 local TYPE_NUMBER = "number"
 local TYPE_TABLE = "table"
+local TYPE_STRING = "string"
 local TYPE_THREAD = "thread"
 local TYPE_FUNCTION = "function"
 
@@ -320,9 +325,9 @@ local TYPE_FUNCTION = "function"
 local function checkargtype(val, argnum, func_name, ...)
 	local expected_types = {}
 	local t = d_type(val)
-	local count = d_select('#', ...) or "nil"
-	for i in count do
-		local expected = d_select(i, ...)
+	local count = d_select('#', ...)
+	for i = 1, count do
+		local expected = d_select(i, ...) or "nil"
 		if t == expected then
 			return
 		end
@@ -416,41 +421,34 @@ _G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(command, ...)
 	return __undetoured(command, ...)
 end)
 
--- Behaves exactly like table.insert
-local function pureLuaInsert(tab, key, val)
-	if not d_istable(tab) then return end
-
-	if val ~= nil then
-		if not d_isnumber(key) then return end
-		for k = #tab, key, -1 do
-			tab[k + 1] = tab[k]
-		end
-		d_rawset(tab, key, val)
-		return key
-	elseif key ~= nil then
-		local ind = #tab + 1
-		d_rawset(tab, ind, key)
-		return ind
-	end
-end
-
 -- This doesn't call the __newindex metamethod, so we need to patrol this func as well.
-_G.table.insert = detours.attach(table.insert, function(myTable, key, value)
-	checkargtype(myTable, 1, "insert", TYPE_TABLE)
+_G.table.insert = detours.attach(table.insert, function(tbl, position, value)
+	checkargtype(tbl, 1, "insert", TYPE_TABLE)
 
+	local key
 	if value ~= nil then
-		checkargtype(key, 2, "insert", TYPE_NUMBER)
-		if key > 2^31-1 then
-			log(LOGGER.WARN, "table.insert with massive key!")
-			return key
-		end
+		key = position
+		checkargtype(position, 2, "insert", TYPE_NUMBER)
+	else
+		key = #tbl + 1
 	end
 
-	if #myTable > 100000 then log(LOGGER.WARN, "Table") return end
-	if trueTableSize(myTable) > 100000 then return log(LOGGER.WARN, "trueTableSize in table.insert was too large!") end
-	if d_istable(value) and isTableMostlyCopied(myTable, value) then return log(LOGGER.INFO, "Copied table found in table.insert, lag/crash attempt?") end
+	if key > 2^31-1 then
+		log(LOGGER.WARN, "table.insert with massive key!")
+		return key
+	end
 
-	return pureLuaInsert(myTable, key, value)
+	if trueTableSize(tbl) > 200000 then
+		log(LOGGER.WARN, "table.insert with massive table!")
+		return key
+	end
+
+	if d_istable(value) and isTableMostlyCopied(tbl, value) then
+		-- log(LOGGER.WARN, "table.insert with a table that is mostly copied!") -- So many addons cause this for some reason.
+		return key
+	end
+
+	return __undetoured(tbl, key, value)
 end)
 
 _G.debug.getinfo = detours.attach(debug.getinfo, function(funcOrStackLevel, fields)
@@ -474,8 +472,13 @@ end)
 
 --- Detour checking if the pointer is the same.
 _G.string.format = detours.attach(string.format, function(format, ...)
-	if format and d_stringfind(format, "%%p") then
-		-- Whether its gonna try and find a pointer or not.
+	local _t = d_type(format)
+	if _t ~= "string" and _t ~= "number" then
+		checkargtype(format, 1, "format", TYPE_STRING)
+	end
+
+	if format and not d_stringfind(format, "%%[ps]") then
+		-- It's not going to try and get a ptr or tostring a function
 		return __undetoured(format, ...)
 	end
 
@@ -539,7 +542,7 @@ end)
 
 local SAFETY_MEMUSED
 local function memcounter()
-	local out = collectgarbage("count")
+	local out = d_collectgarbage("count")
 	if SAFETY_MEMUSED then
 		return out - SAFETY_MEMUSED
 	end
