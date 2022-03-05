@@ -1,0 +1,23 @@
+[plugin]
+name = "Safety"
+description = "Plugin to keep your gmod experience nice and safe through detouring HTTP and patching crash bugs / exploiting your client."
+author = "Vurv"
+version = "0.2.0"
+language = "lua"
+
+# Custom settings for your plugin.
+# The user can configure these through the menu.
+[settings]
+# TODO: Use an array for these rather than space delimited strings when Autorun supports them.
+
+# IPs to ignore when using Safety
+WhitelistedIPs = ""
+
+# Paths blocked from being modified by Lua.
+BlockedPaths = "sf_filedata e2files starfall expression2"
+BlockedConcommands = "voicerecord retry ^startmovie$ ^endmovie$ ^playdemo$ ^play$ exit developer disconnect showscores mat_specular cl_timeout sendrcon fov screenshot ^ping$ ^record$ ^jpeg$ ^kickme$ ^gmod_mcore_test$ ^achievementRefresh$ ^ScreengrabRequest$ ^Progress$"
+BlockedNetMessages = "ash_ban pac_to_contraption pac_modify_movement pac_projectile pac.AllowPlayerButtons pac_request_precache pac_setmodel pac_update_playerfilter pac_footstep pac_in_editor"
+
+# URL Whitelist
+PatternURLWhitelist = "%w+%.sndcdn%.com/.+ %w+%.dl%.dropboxusercontent%.com/(.+) cdn[%w-_]*%.discordapp%.com/.+"
+SimpleURLWhitelist = "translate.google.com yp.shoutcast.com dl.dropbox.com google.com gitlab.com github.com raw.github.com raw.githubusercontent.com gist.githubusercontent.com www.dropbox.com dl.dropbox.com"

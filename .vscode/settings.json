@@ -1,0 +1,6 @@
+{
+	"Lua.workspace.library": [
+		"D:/__LIBRARIES/libgmod",
+		"definition.lua"
+	]
+}
