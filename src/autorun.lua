@@ -283,7 +283,7 @@ local Str = [[
                     Version %s
                     by Vurv
 ]]
-print( MsgC( WHITE, Str, Autorun.Plugin.VERSION) )
+print( MsgC( WHITE, string.format(Str, Autorun.Plugin.VERSION)) )
 local d_print = print
 
 --- Detour Library
