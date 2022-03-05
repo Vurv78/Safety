@@ -24,16 +24,11 @@ local function ArraySetting(setting)
 	return Autorun.Plugin.Settings[setting]
 end
 
-local WhitelistedIPs = LUTSetting("WhitelistedIPs")
-if WhitelistedIPs[ game.GetIPAddress() ] then
-	print("============\n!!Whitelisted Server detected. Safety OFF!!\n============")
-	return
-end
-
 -- Bad Net Messages to use with net.Start, prevent them from executing. Checks equality
 local BlockedNetMessages = LUTSetting("BlockedNetMessages")
-local BlockedConcommands = ArraySetting("BlockedConcommands")
+local BlockedConcommands = LUTSetting("BlockedConcommands")
 local BlockedPaths = LUTSetting("BlockedPaths")
+local WhitelistedIPs = LUTSetting("WhitelistedIPs")
 
 --[[
 	Detours
@@ -61,7 +56,7 @@ do
 
 	local pattern_urls = ArraySetting("PatternURLWhitelist")
 	local len = #URLWhitelist
-	for k, url in pairs(pattern_urls) do
+	for k, url in ipairs(pattern_urls) do
 		URLWhitelist[k + len] = pattern(url)
 	end
 end
@@ -77,7 +72,6 @@ local d_stringfind = string.find
 local d_stringmatch = string.match
 local d_stringgmatch = string.gmatch
 
-local d_date = os.date
 local d_random = math.random
 
 local d_getinfo = debug.getinfo
@@ -88,8 +82,6 @@ local d_rawset = rawset
 
 local d_setmetatable = setmetatable
 local d_objsetmetatable = debug.setmetatable
---local d_getmetatable = debug.getmetatable
-local d_objgetmetatable = debug.getmetatable
 
 local d_pairs = pairs
 local d_ipairs = ipairs
@@ -103,7 +95,6 @@ local d_isfunction = isfunction
 
 local d_collectgarbage = collectgarbage
 local d_error = error
-local d_select = select
 local d_concat = table.concat
 
 local d_char = string.char
@@ -138,10 +129,19 @@ local BLACK = RGB(0, 0, 0)
 local YELLOW = RGB(255, 255, 100)
 local ALERT_COLOR = RGB(255, 0, 0)
 
-local printColor = chat.AddText
+--- Limits a string to dedicated length, or cuts off with ...
+---@param str string
+---@param len integer
+local function limitString(str, len)
+	if #str > (len - 3) then
+		return str:sub(1, len) .. "..."
+	else
+		return str
+	end
+end
 
 local function alert(...)
-	printColor( BLACK, "[", ALERT_COLOR, "Safety", BLACK, "]: ", WHITE, d_format(...), "\n", YELLOW, d_traceback() )
+	MsgC( BLACK, "[", ALERT_COLOR, "Safety", BLACK, "]: ", WHITE, d_format(...), "\n", YELLOW, limitString(d_traceback(), 400), "\n" )
 end
 
 local LOGGER = {
@@ -213,20 +213,6 @@ local function trueTableSize(t, done)
 	return sz
 end
 
---- Cheap check if two tables equal in their values
----@param t table
----@param t2 table
----@return boolean mostly_copied
-local function isTableMostlyCopied(t, t2)
-	if not d_istable(t) or not d_istable(t2) then return false end
-	if d_objgetmetatable(t) ~= d_objgetmetatable(t2) then return false end
-
-	for k, v in d_pairs(t) do
-		if t2[k] ~= v then return false end
-	end
-	return true
-end
-
 --- Returns a locked version of table t.
 ---@param t table
 ---@return table locked_version
@@ -245,19 +231,14 @@ end
 local LOCKED_REGISTRY = getLocked(_R)
 ProtectedMetatables[LOCKED_REGISTRY] = "Locked _R"
 
-local function error_fmt(level, msg, ...)
-	d_error( d_format(msg, ...), level + 1 )
-end
-
 local TYPE_NUMBER = "number"
-local TYPE_TABLE = "table"
 local TYPE_STRING = "string"
-local TYPE_FUNCTION = "function"
 
 --- Startup
 
 jit.off()
 local Str = [[
+=====================================================================
 
     ad88888ba                  ad88
     d8"     "8b                d8"                 ,d
@@ -270,15 +251,26 @@ local Str = [[
                                                               d8'
                                                              d8'
                     Version %s
-                    by Vurv
+                    by %s
 ]]
-print( MsgC( WHITE, string.format(Str, Autorun.Plugin.VERSION)) )
-local d_print = print
 
---- Detour Library
--- https://github.com/Vurv78/lua/blob/master/LuaJIT/Libraries/skid_detours.lua
+local disabled = WhitelistedIPs[Autorun.IP]
+MsgC (
+	WHITE,
+	string.format(Str, Autorun.Plugin.VERSION, Autorun.Plugin.AUTHOR),
+	"\n\tStatus: ", disabled and RGB(255, 0, 0) or RGB(0, 255, 0), disabled and "DISABLED" or "ENABLED",
+	WHITE,
+	"\n=====================================================================\n"
+)
 
--- Skid Detour library based off of msdetours.
+if disabled then
+	log(LOGGER.INFO, "IP is whitelisted: " .. Autorun.IP)
+	return
+end
+
+--[[
+	Detour Library
+]]
 
 local detours = { list = {}, hide = {} }
 
@@ -326,12 +318,14 @@ d_setmetatable(begunMeshes, {
 	__mode = "k"
 })
 
-_G.mesh.Begin = detours.attach(mesh.Begin, function(hk, mesh, primitiveType, primiteCount)
-	if mesh then
-		if begunMeshes[mesh] then return log( LOGGER.WARN, "mesh.Begin called with a mesh that has already been started.") end
-		begunMeshes[mesh] = true
+_G.mesh.Begin = detours.attach(mesh.Begin, function(hk, i_mesh, primitiveType, primiteCount)
+	if i_mesh then
+		if begunMeshes[i_mesh] then
+			return log( LOGGER.WARN, "mesh.Begin called with a mesh that has already been started.")
+		end
+		begunMeshes[i_mesh] = true
 	end
-	hk(mesh, primitiveType, primiteCount)
+	hk(i_mesh, primitiveType, primiteCount)
 end)
 
 _G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(hk, command, ...)
@@ -343,10 +337,8 @@ _G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(hk, command, .
 	-- In case it's a number
 	command = d_tostring(command)
 
-	for _, blacklisted in d_ipairs(BlockedConcommands) do
-		if d_stringfind(command, blacklisted) then
-			return log( LOGGER.WARN, "Found blacklisted cmd ['%s'] being executed with RunConsoleCommand", command )
-		end
+	if BlockedConcommands[command] then
+		return log( LOGGER.WARN, "Found blacklisted cmd ['%s'] being executed with RunConsoleCommand", command )
 	end
 
 	log(LOGGER.TRACE, "RunConsoleCommand(%s)", command)
@@ -355,8 +347,6 @@ end)
 
 -- This doesn't call the __newindex metamethod, so we need to patrol this func as well.
 _G.table.insert = detours.attach(table.insert, function(hk, tbl, position, value)
-	-- checkargtype(tbl, 1, "insert", TYPE_TABLE)
-
 	local key
 	if d_istable(tbl) and position ~= nil then
 		if value ~= nil then
@@ -466,6 +456,9 @@ _G.jit.attach = detours.attach(jit.attach, function(hk, callback, event)
 		detours.shadow(callback)( detours.shadow(a) )
 	end, event )
 end)
+
+-- Make lua language server happy..
+_G.jit.util = _G.jit.util or {}
 
 _G.jit.util.ircalladdr = detours.attach(jit.util.ircalladdr, function(hk, index)
 	return hk(index)
@@ -909,10 +902,8 @@ _R.Player.ConCommand = detours.attach(_R.Player.ConCommand, function(hk, ply, cm
 	log( LOGGER.INFO, "%s:ConCommand(%s)", ply, cmd_str )
 
 	local command = d_stringmatch(cmd_str, "^(%S+)")
-	for _, blacklisted in d_ipairs(BlockedConcommands) do
-		if d_stringfind(command, blacklisted) then
-			return log( LOGGER.WARN, "Found blacklisted cmd ['%s'] being executed with RunConsoleCommand", command)
-		end
+	if BlockedConcommands[command] then
+		return log( LOGGER.WARN, "Found blacklisted cmd ['%s'] being executed with player:ConCommand(string)", command)
 	end
 
 	return hk(ply, cmd_str)

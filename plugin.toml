@@ -2,7 +2,7 @@
 name = "Safety"
 description = "Plugin to keep your gmod experience nice and safe through detouring HTTP and patching crash bugs / exploiting your client."
 author = "Vurv"
-version = "0.2.0"
+version = "0.2.1"
 language = "lua"
 
 # Custom settings for your plugin.
@@ -15,14 +15,14 @@ WhitelistedIPs = []
 BlockedPaths = ["sf_filedata", "e2files", "starfall", "expression2"]
 
 BlockedConcommands = [
-	"voicerecord", "retry", "startmovie",
-	"endmovie", "playdemo", "play",
-	"exit", "developer", "disconnect",
-	"showscores", "mat_specular", "cl_timeout",
-	"sendrcon", "fov", "screenshot",
-	"^ping$", "^record$", "^jpeg$",
-	"^kickme$", "^gmod_mcore_test$", "^achievementRefresh$",
-	"^ScreengrabRequest$", "^Progress$"
+	"+voicerecord", "-voicerecord", "retry",
+	"startmovie", "endmovie", "playdemo",
+	"play", "exit", "developer",
+	"disconnect", "showscores", "mat_specular",
+	"cl_timeout", "sendrcon", "fov",
+	"screenshot", "ping", "record",
+	"jpeg", "kickme", "gmod_mcore_test",
+	"achievementRefresh", "ScreengrabRequest", "Progress"
 ]
 
 BlockedNetMessages = [
