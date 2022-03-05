@@ -2,17 +2,6 @@
 	Configs
 ]]
 
----@param s string
----@return table
-local function SplitWhitespace(s)
-	local t, n = {}, 0
-	for word in string.gmatch(s, "%S+") do
-		n = n + 1
-		t[ n ] = word
-	end
-	return t
-end
-
 --- Creates a lookup table from an array table
 local function ToLUT(t)
 	local lut = {}
@@ -26,13 +15,13 @@ end
 ---@param setting string
 ---@return table
 local function LUTSetting(setting)
-	return ToLUT(SplitWhitespace( Autorun.Plugin.Settings[setting] ))
+	return ToLUT(Autorun.Plugin.Settings[setting])
 end
 
 ---@param setting string
 ---@return table
 local function ArraySetting(setting)
-	return SplitWhitespace( Autorun.Plugin.Settings[setting] )
+	return Autorun.Plugin.Settings[setting]
 end
 
 local WhitelistedIPs = LUTSetting("WhitelistedIPs")
