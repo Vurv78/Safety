@@ -3,6 +3,8 @@
 ]]
 
 --- Creates a lookup table from an array table
+---@param t table
+---@return table
 local function ToLUT(t)
 	local lut = {}
 	for i, v in pairs(t) do
@@ -30,6 +32,42 @@ local BlockedConcommands = LUTSetting("BlockedConcommands")
 local BlockedPaths = LUTSetting("BlockedPaths")
 local WhitelistedIPs = LUTSetting("WhitelistedIPs")
 
+---@class FilePermission
+local FilePermission = {
+	readonly = 0,
+	readwrite = 2, -- Also includes append.
+	writeonly = 3,
+	hidden = 4
+}
+
+--[[
+	Folder structured as:
+	FilePerms = {
+		["GAME"] = {
+			["e2files/*.txt"] = FilePermission.readonly
+		}
+	}
+
+	Except keys are changed to be lua patterns by replacing * with [^/]+
+]]
+local FilePerms = Autorun.Plugin.Settings.FilePerms
+
+do
+	local out = {}
+	for k, v in pairs(FilePerms) do
+		local scope, rest = string.match(k, "^(%w+)|(.+)$")
+		scope = scope or "DATA"
+		rest = rest or k
+
+		rest = string.gsub(rest, "%*", "[^/\\]+")
+
+		out[scope] = out[scope] or {}
+		out[scope][rest] =  FilePermission[v] or FilePermission.readonly
+	end
+
+	FilePerms = out
+end
+
 --[[
 	Detours
 ]]
@@ -43,21 +81,18 @@ local function patternSafe(s)
 	return d_stringgsub(s, "[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1")
 end
 
-local function pattern(str) return { str, true } end
-local function simple(str) return { patternSafe(str), false } end
-
 local URLWhitelist = {}
 
 do
 	local simple_urls = ArraySetting("SimpleURLWhitelist")
 	for k, url in ipairs(simple_urls) do
-		URLWhitelist[k] = simple(url)
+		URLWhitelist[k] = { patternSafe(url), false }
 	end
 
 	local pattern_urls = ArraySetting("PatternURLWhitelist")
 	local len = #URLWhitelist
 	for k, url in ipairs(pattern_urls) do
-		URLWhitelist[k + len] = pattern(url)
+		URLWhitelist[k + len] = { url, true }
 	end
 end
 
@@ -71,6 +106,7 @@ local d_format = string.format
 local d_stringfind = string.find
 local d_stringmatch = string.match
 local d_stringgmatch = string.gmatch
+local d_sub = string.sub
 
 local d_random = math.random
 
@@ -79,6 +115,7 @@ local d_traceback = debug.traceback
 
 local d_rawget = rawget
 local d_rawset = rawset
+local d_rawequal = rawequal
 
 local d_setmetatable = setmetatable
 local d_objsetmetatable = debug.setmetatable
@@ -153,14 +190,15 @@ local LOGGER = {
 }
 
 ---@param urgency string
-local function log(urgency, ...)
+---@param fmt string
+local function log(urgency, fmt, ...)
 	if urgency <= LOGGER.WARN then
-		alert(...)
+		alert(fmt, ...)
 	end
 
 	-- Atrocious debug.getinfo spam
 	Autorun.log(
-		d_format(...) .. " -> " .. ( getLocation(6) or getLocation(5) or getLocation(4) or getLocation(3) or getLocation(2) ),
+		d_format(fmt, ...) .. " -> " .. ( getLocation(6) or getLocation(5) or getLocation(4) or getLocation(3) or getLocation(2) ),
 		urgency
 	)
 end
@@ -168,8 +206,7 @@ end
 ---@param mdl string
 local function isMaliciousModel(mdl)
 	-- https://github.com/Facepunch/garrysmod-issues/issues/4449
-	if d_stringmatch(mdl, "%.(.+)$") == "bsp" then return true end
-	return false
+	return d_stringmatch(mdl, "%.([^.]+)$") == "bsp"
 end
 
 ---@param url string
@@ -179,7 +216,7 @@ local function isWhitelistedURL(url)
 	local relative = d_stringmatch(url, "^https?://(.*)")
 	if not relative then return false end
 
-	for _, data in ipairs(URLWhitelist) do
+	for _, data in d_ipairs(URLWhitelist) do
 		local match, is_pattern = data[1], data[2]
 
 		local haystack = is_pattern and relative or (d_stringmatch(relative, "(.-)/.*") or relative)
@@ -221,7 +258,7 @@ local function getLocked(t)
 		__index = t,
 		__newindex = function(_, k, v)
 			-- Do not allow overwriting, which could cause crashes.
-			if d_rawget(t, k) == nil then
+			if d_rawequal( d_rawget(t, k), nil ) then
 				d_rawset(t, k, v)
 			end
 		end
@@ -338,7 +375,7 @@ _G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(hk, command, .
 	command = d_tostring(command)
 
 	if BlockedConcommands[command] then
-		return log( LOGGER.WARN, "Found blacklisted cmd ['%s'] being executed with RunConsoleCommand", command )
+		return log( LOGGER.WARN, "Found blacklisted cmd [%q] being executed with RunConsoleCommand", command )
 	end
 
 	log(LOGGER.TRACE, "RunConsoleCommand(%s)", command)
@@ -427,7 +464,7 @@ _G.string.format = detours.attach(string.format, function(hk, format, ...)
 		T[k] = new
 	end
 	if did_shadow then
-		log( LOGGER.INFO, "Detoured string.format('%s', ...)", format )
+		log( LOGGER.INFO, "Detoured string.format(%q, ...)", format )
 	end
 
 	return hk( format, d_unpack(T) )
@@ -497,7 +534,7 @@ _G["gcinfo"] = detours.attach(_G["gcinfo"], function()
 end)
 
 _G.collectgarbage = detours.attach(collectgarbage, function(hk, action, arg)
-	if action == "count" then
+	if d_rawequal(action, "count") then
 		return memcounter()
 	end
 	return hk( action, arg )
@@ -525,7 +562,7 @@ _G.debug.sethook = detours.attach(debug.sethook, function(hk, thread, hook, mask
 end)
 
 _G.debug.gethook = detours.attach(debug.gethook, function(hk, thread)
-	--return d_unpack(HookList["current"])
+	-- return d_unpack(HookList["current"])
 	return hk(thread)
 end)
 
@@ -545,7 +582,7 @@ _G.setmetatable = detours.attach(setmetatable, function(hk, tab, metatable)
 	else
 		if ProtectedMetatables[tab] then
 			fakeMetatables[tab] = metatable
-			log(LOGGER.WARN, "Denied [set] access to protected metatable '%s'", ProtectedMetatables[tab])
+			log(LOGGER.WARN, "Denied [set] access to protected metatable %q", ProtectedMetatables[tab])
 			return tab
 		end
 		hk( detours.shadow(tab), metatable )
@@ -561,7 +598,7 @@ _G.debug.setmetatable = detours.attach(debug.setmetatable, function(hk, object, 
 
 	if ProtectedMetatables[object] then
 		fakeMetatables[object] = metatable -- To pretend it actually got set.
-		log(LOGGER.WARN, "Denied [set, debug] access to protected metatable '%s'", ProtectedMetatables[object])
+		log(LOGGER.WARN, "Denied [set, debug] access to protected metatable %q", ProtectedMetatables[object])
 		return true
 	end
 	return hk( detours.shadow(object), metatable )
@@ -569,7 +606,7 @@ end)
 
 _G.getmetatable = detours.attach(getmetatable, function(hk, object)
 	if ProtectedMetatables[object] then
-		log( LOGGER.WARN, "Denied [get] access to protected metatable '%s'", ProtectedMetatables[object] )
+		log( LOGGER.WARN, "Denied [get] access to protected metatable %q", ProtectedMetatables[object] )
 		return fakeMetatables[object]
 	end
 	return hk( detours.shadow(object) )
@@ -577,14 +614,14 @@ end)
 
 _G.debug.getmetatable = detours.attach(debug.getmetatable, function(hk, object)
 	if ProtectedMetatables[object] then
-		log( LOGGER.WARN, "Denied [get, debug] access to protected metatable '%s'", ProtectedMetatables[object] )
+		log( LOGGER.WARN, "Denied [get, debug] access to protected metatable %q", ProtectedMetatables[object] )
 		return fakeMetatables[object]
 	end
 	return hk( detours.shadow(object) )
 end)
 
 _G.setfenv = detours.attach(setfenv, function(hk, location, enviroment)
-	if location == 0 then
+	if d_rawequal(location, 0) then
 		log(LOGGER.WARN, "Someone tried to setfenv(0, x)!") return
 	end
 	return hk( detours.shadow(location), enviroment)
@@ -635,118 +672,281 @@ _G.file.Delete = detours.attach(file.Delete, function(hk, name)
 		-- Error
 		return hk(name)
 	end
-	log( LOGGER.WARN, "Someone attempted to delete file [" .. name .. "]" )
+
+	log( LOGGER.WARN, "Someone attempted to delete file [%s]", name )
 end)
 
 -- Patches #1091 https://github.com/Facepunch/garrysmod-issues/issues/1091
 local CamStack = 0
 
-local function pushCam()
-	return function(hk, ...)
-		CamStack = CamStack + 1
-		hk(...)
-	end
+local function pushCam(hk, ...)
+	CamStack = CamStack + 1
+	hk(...)
 end
 
-local function popCam()
-	return function(hk)
-		if CamStack == 0 then
-			return log(LOGGER.WARN, "Attempted to pop cam without a valid context")
-		end
-		CamStack = CamStack - 1
-		hk()
+local function popCam(hk)
+	if CamStack == 0 then
+		return log(LOGGER.WARN, "Attempted to pop cam without a valid context")
 	end
+	CamStack = CamStack - 1
+	hk()
 end
 
-_G.cam.Start = detours.attach( cam.Start, pushCam() )
-_G.cam.Start3D2D = detours.attach( cam.Start3D2D, pushCam() )
-_G.cam.StartOrthoView = detours.attach( cam.StartOrthoView, pushCam() )
+_G.cam.Start = detours.attach( cam.Start, pushCam )
+_G.cam.Start3D2D = detours.attach( cam.Start3D2D, pushCam )
+_G.cam.StartOrthoView = detours.attach( cam.StartOrthoView, pushCam )
 
-_G.cam.End2D = detours.attach( cam.End2D, popCam() )
-_G.cam.End3D = detours.attach( cam.End3D, popCam() )
-_G.cam.End3D2D = detours.attach( cam.End3D2D, popCam() )
-_G.cam.End = detours.attach( cam.End, popCam() )
-_G.cam.EndOrthoView = detours.attach( cam.EndOrthoView, popCam() )
-
--- File Metatable, but you can't write with it.
----@param ret any Value to return inside of function ``f``
----@return function f File method function that will just log and return the value passed.
-local function fileMethod(ret)
-	return function()
-		log(LOGGER.WARN, "Someone tried to read/write to a locked file!")
-		return ret
-	end
-end
-
----@param path string Path to check
----@return boolean If the file at the path is not allowed to be accessed.
-local function isLockedPath(path)
-	for _, blocked_path in ipairs(BlockedPaths) do
-		if d_stringfind(path, blocked_path) then
-			return true
-		end
-	end
-	return false
-end
+_G.cam.End2D = detours.attach( cam.End2D, popCam )
+_G.cam.End3D = detours.attach( cam.End3D, popCam )
+_G.cam.End3D2D = detours.attach( cam.End3D2D, popCam )
+_G.cam.End = detours.attach( cam.End, popCam )
+_G.cam.EndOrthoView = detours.attach( cam.EndOrthoView, popCam )
 
 local FILE_META = debug.getregistry().File
-local LockedFileMeta = {
-	-- These just return default values but may do other stuff later.
 
-	Write = detours.attach( FILE_META.Write, fileMethod() ),
-	WriteBool = detours.attach( FILE_META.WriteBool, fileMethod() ),
-	WriteByte = detours.attach( FILE_META.WriteByte, fileMethod() ),
-	WriteDouble = detours.attach( FILE_META.WriteDouble, fileMethod() ),
-	WriteFloat = detours.attach( FILE_META.WriteFloat, fileMethod() ),
-	WriteLong = detours.attach( FILE_META.WriteLong, fileMethod() ),
-	WriteShort = detours.attach( FILE_META.WriteShort, fileMethod() ),
-	WriteULong = detours.attach( FILE_META.WriteULong, fileMethod() ),
-	WriteUShort = detours.attach( FILE_META.WriteUShort, fileMethod() ),
+local function DO_NOTHING() end
+local function RETURN(val) return function() return val end end
 
-	Read = detours.attach( FILE_META.Read, fileMethod("") ),
-	ReadBool = detours.attach( FILE_META.ReadBool, fileMethod(true) ),
-	ReadByte = detours.attach( FILE_META.ReadByte, fileMethod(0) ),
-	ReadDouble = detours.attach( FILE_META.ReadDouble, fileMethod(0) ),
-	ReadFloat = detours.attach( FILE_META.ReadFloat, fileMethod(0) ),
-	ReadLong = detours.attach( FILE_META.ReadLong, fileMethod(0) ),
-	ReadShort = detours.attach( FILE_META.ReadShort, fileMethod(0) ),
-	ReadULong = detours.attach( FILE_META.ReadULong, fileMethod(0) ),
-	ReadUShort = detours.attach( FILE_META.ReadUShort, fileMethod(0) ),
-	ReadLine = detours.attach( FILE_META.ReadLine, fileMethod("") ),
+---@class ReadOnlyFile
+local ReadOnlyFile = {
+	Read = FILE_META.Read,
+	ReadBool = FILE_META.ReadBool,
+	ReadByte = FILE_META.ReadByte,
+	ReadDouble = FILE_META.ReadDouble,
+	ReadFloat = FILE_META.ReadFloat,
+	ReadLong = FILE_META.ReadLong,
+	ReadShort = FILE_META.ReadShort,
+	ReadULong = FILE_META.ReadULong,
+	ReadUShort = FILE_META.ReadUShort,
+	ReadLine = FILE_META.ReadLine,
 
-	Size = detours.attach( FILE_META.Size, fileMethod(0) ),
+	Write = detours.attach( FILE_META.Write, DO_NOTHING ),
+	WriteBool = detours.attach( FILE_META.WriteBool, DO_NOTHING ),
+	WriteByte = detours.attach( FILE_META.WriteByte, DO_NOTHING ),
+	WriteDouble = detours.attach( FILE_META.WriteDouble, DO_NOTHING ),
+	WriteFloat = detours.attach( FILE_META.WriteFloat, DO_NOTHING ),
+	WriteLong = detours.attach( FILE_META.WriteLong, DO_NOTHING ),
+	WriteShort = detours.attach( FILE_META.WriteShort, DO_NOTHING ),
+	WriteULong = detours.attach( FILE_META.WriteULong, DO_NOTHING ),
+	WriteUShort = detours.attach( FILE_META.WriteUShort, DO_NOTHING ),
 
-	EndOfFile = detours.attach( FILE_META.EndOfFile, fileMethod(true) ),
+	__tostring = FILE_META.__tostring,
+	Size = FILE_META.Size,
 	Close = FILE_META.Close,
-	Flush = detours.attach( FILE_META.Flush, fileMethod() ),
-	Seek = FILE_META.Seek,
+	Flush = FILE_META.Flush,
+	EndOfFile = FILE_META.EndOfFile,
 	Tell = FILE_META.Tell,
-
-	__tostring = FILE_META.__tostring
+	Seek = FILE_META.Seek,
+	Skip = FILE_META.Skip
 }
 
-LockedFileMeta.__index = LockedFileMeta
+---@class WriteOnlyFile
+local WriteOnlyFile = {
+	Write = FILE_META.Write,
+	WriteBool = FILE_META.WriteBool,
+	WriteByte = FILE_META.WriteByte,
+	WriteDouble = FILE_META.WriteDouble,
+	WriteFloat = FILE_META.WriteFloat,
+	WriteLong = FILE_META.WriteLong,
+	WriteShort = FILE_META.WriteShort,
+	WriteULong = FILE_META.WriteULong,
+	WriteUShort = FILE_META.WriteUShort,
 
-_G.file.Open = detours.attach(file.Open, function(hk, fileName, fileMode, path)
-	local fileobj = hk(fileName, fileMode, path)
-	if not fileobj then return end
-	if isLockedPath(fileName) then
-		log( LOGGER.INFO, "Locked file created! %s", fileName )
-		d_objsetmetatable(fileobj, LockedFileMeta)
+	Read = detours.attach( FILE_META.Read, RETURN("") ),
+	ReadBool = detours.attach( FILE_META.ReadBool, RETURN(false) ),
+	ReadByte = detours.attach( FILE_META.ReadByte, RETURN(0) ),
+	ReadDouble = detours.attach( FILE_META.ReadDouble, RETURN(0) ),
+	ReadFloat = detours.attach( FILE_META.ReadFloat, RETURN(0) ),
+	ReadLong = detours.attach( FILE_META.ReadLong, RETURN(0) ),
+	ReadShort = detours.attach( FILE_META.ReadShort, RETURN(0) ),
+	ReadULong = detours.attach( FILE_META.ReadULong, RETURN(0) ),
+	ReadUShort = detours.attach( FILE_META.ReadUShort, RETURN(0) ),
+	ReadLine = detours.attach( FILE_META.ReadLine, RETURN("") ),
+
+	__tostring = FILE_META.__tostring,
+	Size = FILE_META.Size,
+	Close = FILE_META.Close,
+	Flush = FILE_META.Flush,
+	EndOfFile = FILE_META.EndOfFile,
+	Tell = FILE_META.Tell,
+	Seek = FILE_META.Seek,
+	Skip = FILE_META.Skip
+}
+
+ReadOnlyFile.__index = ReadOnlyFile
+WriteOnlyFile.__index = WriteOnlyFile
+
+
+local ValidModes = ToLUT( { "rb", "r", "w", "wb", "a", "ab" } )
+local ModePerms = {
+	["r"] = {
+		[FilePermission.readonly] = true,
+		[FilePermission.readwrite] = true
+	},
+	["rb"] = {
+		[FilePermission.readonly] = true,
+		[FilePermission.readwrite] = true
+	},
+	["w"] = {
+		[FilePermission.writeonly] = true,
+		[FilePermission.readwrite] = true
+	},
+	["wb"] = {
+		[FilePermission.writeonly] = true,
+		[FilePermission.readwrite] = true
+	},
+	["a"] = {
+		[FilePermission.readwrite] = true,
+		[FilePermission.writeonly] = true
+	},
+	["ab"] = {
+		[FilePermission.readwrite] = true,
+		[FilePermission.writeonly] = true
+	}
+}
+
+local HandleMetas = {
+	["rb"] = ReadOnlyFile,
+	["r"] = ReadOnlyFile,
+	["wb"] = WriteOnlyFile,
+	["w"] = WriteOnlyFile,
+	["ab"] = WriteOnlyFile,
+	["a"] = WriteOnlyFile
+}
+
+---@param path string
+---@param scope string?
+---@return FilePermission?
+local function permFromPath(path, scope)
+	if scope then
+		if not FilePerms[scope] then
+			return
+		end
+		for pattern, perm in pairs(FilePerms[scope]) do
+			local match = d_stringfind(path, pattern)
+			if match then
+				return perm
+			end
+		end
+	else
+		for scope2, v in pairs(FilePerms) do
+			for pattern, perm in pairs(FilePerms[scope2]) do
+				local match = d_stringfind(path, pattern)
+				if match then
+					return perm
+				end
+			end
+		end
 	end
-	return fileobj
+end
+
+_G.file.Open = detours.attach(file.Open, function(hk, path, mode, scope)
+	if not scope or not d_isstring(mode) then
+		-- Error
+		return hk(path, mode, scope)
+	end
+
+	if not ValidModes[mode] then
+		-- Error
+		return hk(path, mode, scope)
+	end
+
+	if FilePerms[scope] then
+		local mode_required_perms = ModePerms[mode]
+
+		path = d_tostring(path)
+		for pattern, perm in pairs(FilePerms[scope]) do
+			local match = d_stringfind(path, pattern)
+			if match then
+				if perm == FilePermission.hidden then
+					return nil
+				elseif mode_required_perms[perm] then
+					local handle = hk(path, mode, scope)
+					d_setmetatable(handle, HandleMetas[mode])
+				else
+					log(LOGGER.WARN, "Access denied to file %q for scope %q. Need permission %s", path, scope, perm)
+				end
+			end
+		end
+	end
 end)
 
-_G.file.Rename = detours.attach(file.Rename, function(hk, orignalFileName, targetFileName)
-	if isLockedPath(orignalFileName) then
-		return log(LOGGER.WARN, "Someone tried to rename file [%s] with filename %s", orignalFileName, targetFileName)
+_G.file.Rename = detours.attach(file.Rename, function(hk, path, to)
+	local perm = permFromPath(path, "DATA")
+	local perm2 = permFromPath(to, "DATA")
+	if perm == FilePermission.hidden or FilePermission.readonly then
+		log(LOGGER.WARN, "Someone tried to rename file [%s] with filename %s", path, to)
+		return false
+	elseif perm2 == FilePermission.hidden or perm2 == FilePermission.readonly then
+		-- Trying to move a file into a restricted directory
+		log(LOGGER.WARN, "Someone tried to rename file [%s] with filename %s", path, to)
+		return false
 	end
-	return hk(true, orignalFileName, targetFileName)
+
+	return hk(path, to)
+end)
+
+_G.file.Time = detours.attach(file.Time, function(hk, path, scope)
+	local perm = permFromPath(path, scope)
+	if perm == FilePermission.hidden or perm == FilePermission.writeonly then
+		log(LOGGER.WARN, "Someone tried to get the time of file [%s]", path)
+		return 0
+	end
+	return hk(path, scope)
+end)
+
+_G.file.IsDir = detours.attach(file.IsDir, function(hk, path, scope)
+	local perm = permFromPath(path, scope)
+	if perm == FilePermission.hidden then
+		log(LOGGER.WARN, "Someone tried to check if file [%s] is a directory", path)
+		return false
+	end
+	return hk(path, scope)
+end)
+
+_G.file.Exists = detours.attach(file.Exists, function(hk, path, scope)
+	local perm = permFromPath(path, scope)
+	if perm == FilePermission.hidden then
+		log(LOGGER.WARN, "Someone tried to check if file [%s] exists", path)
+		return false
+	end
+	return hk(path, scope)
+end)
+
+_G.file.Size = detours.attach(file.Size, function(hk, path, scope)
+	local perm = permFromPath(path, scope)
+	if perm == FilePermission.hidden then
+		log(LOGGER.WARN, "Someone tried to get the size of file [%s]", path)
+		return 0
+	end
+	return hk(path, scope)
+end)
+
+_G.file.Find = detours.attach(file.Find, function(hk, path, scope, sorting)
+	local perm = permFromPath(path, scope)
+
+	if perm == FilePermission.hidden then
+		log(LOGGER.WARN, "Someone tried to find files in directory [%s]", path)
+		return {}, {}
+	end
+
+	return hk(path, scope, sorting)
+end)
+
+_G.file.AsyncRead = detours.attach(file.AsyncRead, function(hk, path, scope, callback, sync)
+	local perm = permFromPath(path, scope or "DATA")
+	if perm == FilePermission.hidden or perm == FilePermission.writeonly then
+		log(LOGGER.WARN, "Someone tried to async read file [%s]", path)
+
+		callback(path, scope, -1)
+		return 0
+	end
+	return hk(path, scope, callback, sync)
 end)
 
 _G.net.Start = detours.attach(net.Start, function(hk, str, unreliable)
 	if BlockedNetMessages[str] then
-		return log(LOGGER.INFO, "Blocked net.Start('%s', %s)!", str, unreliable)
+		return log(LOGGER.INFO, "Blocked net.Start(%q, %s)!", str, unreliable)
 	end
 	log( LOGGER.TRACE, "net.Start(%s, %s)", str, unreliable )
 
@@ -808,7 +1008,7 @@ _G.RunStringEx = detours.attach(RunStringEx, function(hk, code, identifier, hand
 end)
 
 _G.game.MountGMA = detours.attach(game.MountGMA, function(hk, path)
-	log( LOGGER.INFO, "Mounting GMA: '%s'", path )
+	log( LOGGER.INFO, "Mounting GMA: %q", path )
 	return hk(path)
 end)
 
@@ -831,9 +1031,9 @@ end)
 
 _G.gui.OpenURL = detours.attach(gui.OpenURL, function(hk, url)
 	if not isWhitelistedURL(url) then
-		return log( LOGGER.INFO, "Blocked unwhitelisted gui.OpenURL('%s')", url )
+		return log( LOGGER.INFO, "Blocked unwhitelisted gui.OpenURL(%q)", url )
 	end
-	log( LOGGER.INFO, "gui.OpenURL('%s')", url )
+	log( LOGGER.INFO, "gui.OpenURL(%q)", url )
 	return hk(url)
 end)
 
@@ -867,10 +1067,10 @@ end)
 
 _G.sound.PlayURL = detours.attach(sound.PlayURL, function(hk, url, flags, callback)
 	if not isWhitelistedURL(url) then
-		return log( LOGGER.WARN, "Blocked sound.PlayURL('%s', '%s', %p)", url, flags, callback )
+		return log( LOGGER.WARN, "Blocked sound.PlayURL(%q, %q, %p)", url, flags, callback )
 	end
 
-	log( LOGGER.INFO, "sound.PlayURL('%s', '%s', %p)", url, flags, callback )
+	log( LOGGER.INFO, "sound.PlayURL(%q, %q, %p)", url, flags, callback )
 	return hk(url, flags, callback)
 end)
 
@@ -881,7 +1081,7 @@ _G.HTTP = detours.attach(HTTP, function(hk, parameters)
 
 	local url = d_rawget(parameters, "url")
 	if url and not isWhitelistedURL(url) then
-		log( LOGGER.WARN, "Blocked HTTP('%s')", url)
+		log( LOGGER.WARN, "Blocked HTTP(%q)", url)
 
 		local onfailure = d_rawget(parameters, "onfailure")
 		if d_isfunction(onfailure) then
@@ -899,11 +1099,9 @@ _R.Player.ConCommand = detours.attach(_R.Player.ConCommand, function(hk, ply, cm
 		return hk(ply, cmd_str)
 	end
 
-	log( LOGGER.INFO, "%s:ConCommand(%s)", ply, cmd_str )
-
 	local command = d_stringmatch(cmd_str, "^(%S+)")
 	if BlockedConcommands[command] then
-		return log( LOGGER.WARN, "Found blacklisted cmd ['%s'] being executed with player:ConCommand(string)", command)
+		return log( LOGGER.WARN, "Found blacklisted cmd [%q] being executed with Self:ConCommand(%q)", command, cmd_str)
 	end
 
 	return hk(ply, cmd_str)
@@ -926,10 +1124,34 @@ ISSUE_4116 = detours.attach(_R.Entity.DrawModel, function(hk, ent, flags)
 
 	-- Fixes #4116 https://github.com/Facepunch/garrysmod-issues/issues/4116
 	_R.Entity.DrawModel = function() end -- disable function
-	hk(ent, flags)
+	local ok, err = pcall(hk, ent, flags)
 	_R.Entity.DrawModel = ISSUE_4116
+
+	if not ok then
+		log(LOGGER.INFO, "Entity.DrawModel failed: %s", err)
+		error(err, 2)
+	end
 end)
 
 _R.Entity.DrawModel = ISSUE_4116
+
+
+--- The detour library makes a new closure for detours anyway, so there's no issue with sharing functions.
+local function Checksum(hk, str)
+	if not d_isstring(str) then
+		return hk(str)
+	end
+
+	if #str > 1e7 then
+		str = d_sub(str, 1, 1e7)
+		return
+	end
+
+	return hk(str)
+end
+
+_G.util.MD5 = detours.attach(util.MD5, Checksum)
+_G.util.SHA1 = detours.attach(util.SHA1, Checksum)
+_G.util.SHA256 = detours.attach(util.SHA256, Checksum)
 
 SAFETY_MEMUSED = d_collectgarbage("count")

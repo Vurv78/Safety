@@ -2,7 +2,7 @@
 name = "Safety"
 description = "Plugin to keep your gmod experience nice and safe through detouring HTTP and patching crash bugs / exploiting your client."
 author = "Vurv"
-version = "0.2.1"
+version = "0.2.2"
 language = "lua"
 
 # Custom settings for your plugin.
@@ -43,5 +43,19 @@ SimpleURLWhitelist = [
 	"translate.google.com", "yp.shoutcast.com", "dl.dropboxusercontent.com",
 	"dl.dropbox.com", "google.com", "gitlab.com",
 	"github.com", "raw.github.com", "raw.githubusercontent.com",
-	"gist.githubusercontent.com", "dropbox.com", "dl.dropbox.com"
+	"gist.githubusercontent.com", "dropbox.com", "dl.dropbox.com",
+	"api.github.com"
 ]
+
+[settings.FilePerms]
+# Any of these perms (Default readonly)
+# "readonly", "readwrite", "writeonly", "hidden"
+# Optional prefix like (XYZ|...), which is default DATA if left out.
+# See https://wiki.facepunch.com/gmod/File_Search_Paths
+"DATA|expressive/*.txt" = "readwrite"
+"DATA|expression2/*.txt" = "readonly"
+"DATA|starfall/*.txt" = "readonly"
+"DATA|sf_filedata/*.txt" = "readonly"
+"DATA|e2files/*.txt" = "readwrite"
+"DATA|advdupe2/*.txt" = "readonly"
+"GAME|lua/bin/*.dll" = "hidden"
