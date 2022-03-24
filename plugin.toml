@@ -8,6 +8,8 @@ language = "lua"
 # Custom settings for your plugin.
 # The user can configure these through the menu.
 [settings]
+AlertLevel = "ERROR"
+
 # If you are on any of the servers here, Safety will not run.
 WhitelistedIPs = []
 

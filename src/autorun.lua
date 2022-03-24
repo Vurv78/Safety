@@ -189,10 +189,12 @@ local LOGGER = {
 	TRACE = 5
 }
 
+local alert_level = LOGGER[Autorun.Plugin.Settings.AlertLevel] or LOGGER.WARN
+
 ---@param urgency string
 ---@param fmt string
 local function log(urgency, fmt, ...)
-	if urgency <= LOGGER.WARN then
+	if urgency <= alert_level then
 		alert(fmt, ...)
 	end
 
@@ -315,7 +317,7 @@ local detours = { list = {}, hide = {} }
 ---@param target function Func to hook
 ---@param replace_with fun(hook: function, args: ...) Func to return
 ---@return function hooked Hooked function that was given in ``replace_with``
-function detours.attach( target, replace_with )
+local function detour_attach( target, replace_with )
 	local fn = function(...)
 		return replace_with(target, ...)
 	end
@@ -327,7 +329,7 @@ end
 ---@param hooked function Hooked function
 ---@return function original Original function to overwrite with.
 ---@return boolean @True if the hook was detached
-function detours.detach( hooked )
+local function detour_detach( hooked )
 	local ret = detours.list[hooked]
 	detours.list[hooked] = nil
 	return ret or hooked, ret and true or false
@@ -338,7 +340,7 @@ end
 ---@param val function Function to check. Can actually be any type though.
 ---@return function original Unhooked value or function.
 ---@return boolean Was the value hooked?
-function detours.shadow( val )
+local function detour_shadow( val )
 	local v = detours.list[val]
 	if v then
 		return v, true
@@ -355,7 +357,7 @@ d_setmetatable(begunMeshes, {
 	__mode = "k"
 })
 
-_G.mesh.Begin = detours.attach(mesh.Begin, function(hk, i_mesh, primitiveType, primiteCount)
+_G.mesh.Begin = detour_attach(mesh.Begin, function(hk, i_mesh, primitiveType, primiteCount)
 	if i_mesh then
 		if begunMeshes[i_mesh] then
 			return log( LOGGER.WARN, "mesh.Begin called with a mesh that has already been started.")
@@ -365,7 +367,7 @@ _G.mesh.Begin = detours.attach(mesh.Begin, function(hk, i_mesh, primitiveType, p
 	hk(i_mesh, primitiveType, primiteCount)
 end)
 
-_G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(hk, command, ...)
+_G.RunConsoleCommand = detour_attach(RunConsoleCommand, function(hk, command, ...)
 	local command_ty = d_type(command)
 	if command_ty ~= TYPE_NUMBER and command_ty ~= TYPE_STRING then
 		return hk(command, ...)
@@ -375,7 +377,7 @@ _G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(hk, command, .
 	command = d_tostring(command)
 
 	if BlockedConcommands[command] then
-		return log( LOGGER.WARN, "Found blacklisted cmd [%q] being executed with RunConsoleCommand", command )
+		return log( LOGGER.DEBUG, "Found blacklisted cmd [%q] being executed with RunConsoleCommand", command )
 	end
 
 	log(LOGGER.TRACE, "RunConsoleCommand(%s)", command)
@@ -383,7 +385,7 @@ _G.RunConsoleCommand = detours.attach(RunConsoleCommand, function(hk, command, .
 end)
 
 -- This doesn't call the __newindex metamethod, so we need to patrol this func as well.
-_G.table.insert = detours.attach(table.insert, function(hk, tbl, position, value)
+_G.table.insert = detour_attach(table.insert, function(hk, tbl, position, value)
 	local key
 	if d_istable(tbl) and position ~= nil then
 		if value ~= nil then
@@ -404,7 +406,8 @@ _G.table.insert = detours.attach(table.insert, function(hk, tbl, position, value
 			log(LOGGER.WARN, "table.insert with massive key!")
 			return key
 		elseif trueTableSize(tbl) > 200000 then
-			log(LOGGER.WARN, "table.insert with massive table!")
+			log(LOGGER.DEBUG, "table.insert with massive table!")
+			rawset(tbl, key, {})
 			return key
 		end
 	else
@@ -415,20 +418,20 @@ _G.table.insert = detours.attach(table.insert, function(hk, tbl, position, value
 	return hk(tbl, key, value)
 end)
 
-_G.debug.getinfo = detours.attach(debug.getinfo, function(hk, funcOrStackLevel, fields)
-	return hk( detours.shadow(funcOrStackLevel), fields)
+_G.debug.getinfo = detour_attach(debug.getinfo, function(hk, funcOrStackLevel, fields)
+	return hk( detour_shadow(funcOrStackLevel), fields)
 end)
 
-_G.string.dump = detours.attach(string.dump, function(hk, func, stripDebugInfo)
+_G.string.dump = detour_attach(string.dump, function(hk, func, stripDebugInfo)
 	if not d_isfunction(func) then
 		-- Error
 		return hk(func)
 	end
-	return hk( detours.shadow(func), stripDebugInfo)
+	return hk( detour_shadow(func), stripDebugInfo)
 end)
 
-_G.debug.getlocal = detours.attach(debug.getlocal, function(hk, thread, level, index)
-	return hk( detours.shadow(thread), (level or 0) + 1, index) -- Same as debug.getinfo
+_G.debug.getlocal = detour_attach(debug.getlocal, function(hk, thread, level, index)
+	return hk( detour_shadow(thread), (level or 0) + 1, index) -- Same as debug.getinfo
 end)
 
 -- Prevent tostring crash with tostring(CreateSound(LocalPlayer(),''))
@@ -436,13 +439,13 @@ function _R.CSoundPatch.__tostring()
 	return "CSoundPatch"
 end
 
-_G.tostring = detours.attach(tostring, function(hk, value)
+_G.tostring = detour_attach(tostring, function(hk, value)
 	-- Could be used as an alternate form to string.format("%p", fn)
-	return hk( detours.shadow(value) )
+	return hk( detour_shadow(value) )
 end)
 
 --- Detour checking if the pointer is the same.
-_G.string.format = detours.attach(string.format, function(hk, format, ...)
+_G.string.format = detour_attach(string.format, function(hk, format, ...)
 	local _t = d_type(format)
 	if _t ~= "string" and _t ~= "number" then
 		-- Should error
@@ -457,7 +460,7 @@ _G.string.format = detours.attach(string.format, function(hk, format, ...)
 	local T = {...}
 	local did_shadow = false
 	for k, arg in d_pairs(T) do
-		local new, shadowed = detours.shadow(arg)
+		local new, shadowed = detour_shadow(arg)
 		if shadowed then
 			did_shadow = true
 		end
@@ -471,17 +474,17 @@ _G.string.format = detours.attach(string.format, function(hk, format, ...)
 end)
 
 
-_G.print = detours.attach(print, function(hk, ...)
+_G.print = detour_attach(print, function(hk, ...)
 	local t = {...}
 	for k, arg in d_pairs(t) do
-		t[k] = detours.shadow(arg)
+		t[k] = detour_shadow(arg)
 	end
 	return hk( d_unpack(t) )
 end)
 
 local JitCallbacks = {}
 
-_G.jit.attach = detours.attach(jit.attach, function(hk, callback, event)
+_G.jit.attach = detour_attach(jit.attach, function(hk, callback, event)
 	-- Attaches jit to a function so they can get constants and protos from it. We will give it the original function.
 	if not d_isfunction(callback) then
 		-- Error
@@ -489,33 +492,33 @@ _G.jit.attach = detours.attach(jit.attach, function(hk, callback, event)
 	end
 
 	JitCallbacks[callback] = event
-	return hk( function(a)
-		detours.shadow(callback)( detours.shadow(a) )
+	return hk( function(a, b, c, d, e, f)
+		detour_shadow(callback)( detour_shadow(a), detour_shadow(b), detour_shadow(c), detour_shadow(d), detour_shadow(e), detour_shadow(f) )
 	end, event )
 end)
 
 -- Make lua language server happy..
 _G.jit.util = _G.jit.util or {}
 
-_G.jit.util.ircalladdr = detours.attach(jit.util.ircalladdr, function(hk, index)
+_G.jit.util.ircalladdr = detour_attach(jit.util.ircalladdr, function(hk, index)
 	return hk(index)
 end)
 
-_G.jit.util.funcinfo = detours.attach(jit.util.funcinfo, function(hk, func, pos) -- Function that is basically Debug.getinfo
-	return hk( detours.shadow(func), pos )
+_G.jit.util.funcinfo = detour_attach(jit.util.funcinfo, function(hk, func, pos) -- Function that is basically Debug.getinfo
+	return hk( detour_shadow(func), pos )
 end)
 
-_G.jit.util.funcbc = detours.attach(jit.util.funcbc, function(hk, func, pos)
-	return hk( detours.shadow(func), pos )
+_G.jit.util.funcbc = detour_attach(jit.util.funcbc, function(hk, func, pos)
+	return hk( detour_shadow(func), pos )
 end)
 
-_G.jit.util.funck = detours.attach(jit.util.funck, function(hk, func, index)
+_G.jit.util.funck = detour_attach(jit.util.funck, function(hk, func, index)
 	-- Function that returns a constant from a lua function, throws an error in native c++ functions which we want here.
-	return hk( detours.shadow(func), index )
+	return hk( detour_shadow(func), index )
 end)
 
-_G.jit.util.funcuvname = detours.attach(jit.util.funcuvname, function(hk, func, index)
-	return hk( detours.shadow(func), index )
+_G.jit.util.funcuvname = detour_attach(jit.util.funcuvname, function(hk, func, index)
+	return hk( detour_shadow(func), index )
 end)
 
 local SAFETY_MEMUSED
@@ -528,12 +531,12 @@ local function memcounter()
 end
 
 -- Using string indexing so gluafixer doesn't cry about gcinfo
-_G["gcinfo"] = detours.attach(_G["gcinfo"], function()
+_G["gcinfo"] = detour_attach(_G["gcinfo"], function()
 	-- Incase in another function to avoid equality with collectgarbage
 	return memcounter()
 end)
 
-_G.collectgarbage = detours.attach(collectgarbage, function(hk, action, arg)
+_G.collectgarbage = detour_attach(collectgarbage, function(hk, action, arg)
 	if d_rawequal(action, "count") then
 		return memcounter()
 	end
@@ -549,7 +552,7 @@ local _HookList = {
 	current = {}
 }
 
-_G.debug.sethook = detours.attach(debug.sethook, function(hk, thread, hook, mask, count)
+_G.debug.sethook = detour_attach(debug.sethook, function(hk, thread, hook, mask, count)
 	return hk(thread, hook, mask, count)
 	--[[
 	if thread and count then
@@ -561,7 +564,7 @@ _G.debug.sethook = detours.attach(debug.sethook, function(hk, thread, hook, mask
 	end]]
 end)
 
-_G.debug.gethook = detours.attach(debug.gethook, function(hk, thread)
+_G.debug.gethook = detour_attach(debug.gethook, function(hk, thread)
 	-- return d_unpack(HookList["current"])
 	return hk(thread)
 end)
@@ -570,7 +573,7 @@ local fakeMetatables = d_setmetatable({}, {
 	__mode = "k"
 })
 
-_G.setmetatable = detours.attach(setmetatable, function(hk, tab, metatable)
+_G.setmetatable = detour_attach(setmetatable, function(hk, tab, metatable)
 	if not d_istable(tab) or not d_istable(metatable) then
 		-- Error
 		return hk(tab, metatable)
@@ -585,12 +588,12 @@ _G.setmetatable = detours.attach(setmetatable, function(hk, tab, metatable)
 			log(LOGGER.WARN, "Denied [set] access to protected metatable %q", ProtectedMetatables[tab])
 			return tab
 		end
-		hk( detours.shadow(tab), metatable )
+		hk( detour_shadow(tab), metatable )
 		return tab
 	end
 end)
 
-_G.debug.setmetatable = detours.attach(debug.setmetatable, function(hk, object, metatable)
+_G.debug.setmetatable = detour_attach(debug.setmetatable, function(hk, object, metatable)
 	if not d_istable(metatable) then
 		-- Error
 		return hk(object, metatable)
@@ -601,59 +604,59 @@ _G.debug.setmetatable = detours.attach(debug.setmetatable, function(hk, object, 
 		log(LOGGER.WARN, "Denied [set, debug] access to protected metatable %q", ProtectedMetatables[object])
 		return true
 	end
-	return hk( detours.shadow(object), metatable )
+	return hk( detour_shadow(object), metatable )
 end)
 
-_G.getmetatable = detours.attach(getmetatable, function(hk, object)
+_G.getmetatable = detour_attach(getmetatable, function(hk, object)
 	if ProtectedMetatables[object] then
 		log( LOGGER.WARN, "Denied [get] access to protected metatable %q", ProtectedMetatables[object] )
 		return fakeMetatables[object]
 	end
-	return hk( detours.shadow(object) )
+	return hk( detour_shadow(object) )
 end)
 
-_G.debug.getmetatable = detours.attach(debug.getmetatable, function(hk, object)
+_G.debug.getmetatable = detour_attach(debug.getmetatable, function(hk, object)
 	if ProtectedMetatables[object] then
 		log( LOGGER.WARN, "Denied [get, debug] access to protected metatable %q", ProtectedMetatables[object] )
 		return fakeMetatables[object]
 	end
-	return hk( detours.shadow(object) )
+	return hk( detour_shadow(object) )
 end)
 
-_G.setfenv = detours.attach(setfenv, function(hk, location, enviroment)
+_G.setfenv = detour_attach(setfenv, function(hk, location, enviroment)
 	if d_rawequal(location, 0) then
 		log(LOGGER.WARN, "Someone tried to setfenv(0, x)!") return
 	end
-	return hk( detours.shadow(location), enviroment)
+	return hk( detour_shadow(location), enviroment)
 end)
 
-_G.debug.setfenv = detours.attach(debug.setfenv, function(hk, object, env)
+_G.debug.setfenv = detour_attach(debug.setfenv, function(hk, object, env)
 	return hk(object, env)
 end)
 
 
-_G.debug.getfenv = detours.attach(debug.getfenv, function(hk, object)
-	return hk( detours.shadow(object) )
+_G.debug.getfenv = detour_attach(debug.getfenv, function(hk, object)
+	return hk( detour_shadow(object) )
 end)
 
-_G.FindMetaTable = detours.attach(FindMetaTable, function(hk, name)
+_G.FindMetaTable = detour_attach(FindMetaTable, function(hk, name)
 	return LOCKED_REGISTRY[name]
 end)
 
-_G.debug.getregistry = detours.attach(debug.getregistry, function()
+_G.debug.getregistry = detour_attach(debug.getregistry, function()
 	return LOCKED_REGISTRY
 end)
 
-_G.debug.getupvalue = detours.attach(debug.getupvalue, function(hk, func, index)
+_G.debug.getupvalue = detour_attach(debug.getupvalue, function(hk, func, index)
 	if not d_isnumber(index) or not d_isfunction(func) then
 		-- Error
 		return hk( func, index )
 	end
 
-	return hk( detours.shadow(func), index )
+	return hk( detour_shadow(func), index )
 end)
 
-_G.render.Capture = detours.attach(render.Capture, function(hk, captureData)
+_G.render.Capture = detour_attach(render.Capture, function(hk, captureData)
 	log( LOGGER.WARN, "Someone attempted to screengrab with render.Capture" )
 	if not captureData then return end
 
@@ -666,7 +669,7 @@ _G.render.Capture = detours.attach(render.Capture, function(hk, captureData)
 	return d_concat(buf)
 end)
 
-_G.file.Delete = detours.attach(file.Delete, function(hk, name)
+_G.file.Delete = detour_attach(file.Delete, function(hk, name)
 	local name_ty = d_type(name)
 	if name_ty ~= TYPE_NUMBER and name_ty ~= TYPE_STRING then
 		-- Error
@@ -692,15 +695,15 @@ local function popCam(hk)
 	hk()
 end
 
-_G.cam.Start = detours.attach( cam.Start, pushCam )
-_G.cam.Start3D2D = detours.attach( cam.Start3D2D, pushCam )
-_G.cam.StartOrthoView = detours.attach( cam.StartOrthoView, pushCam )
+_G.cam.Start = detour_attach( cam.Start, pushCam )
+_G.cam.Start3D2D = detour_attach( cam.Start3D2D, pushCam )
+_G.cam.StartOrthoView = detour_attach( cam.StartOrthoView, pushCam )
 
-_G.cam.End2D = detours.attach( cam.End2D, popCam )
-_G.cam.End3D = detours.attach( cam.End3D, popCam )
-_G.cam.End3D2D = detours.attach( cam.End3D2D, popCam )
-_G.cam.End = detours.attach( cam.End, popCam )
-_G.cam.EndOrthoView = detours.attach( cam.EndOrthoView, popCam )
+_G.cam.End2D = detour_attach( cam.End2D, popCam )
+_G.cam.End3D = detour_attach( cam.End3D, popCam )
+_G.cam.End3D2D = detour_attach( cam.End3D2D, popCam )
+_G.cam.End = detour_attach( cam.End, popCam )
+_G.cam.EndOrthoView = detour_attach( cam.EndOrthoView, popCam )
 
 local FILE_META = debug.getregistry().File
 
@@ -720,15 +723,15 @@ local ReadOnlyFile = {
 	ReadUShort = FILE_META.ReadUShort,
 	ReadLine = FILE_META.ReadLine,
 
-	Write = detours.attach( FILE_META.Write, DO_NOTHING ),
-	WriteBool = detours.attach( FILE_META.WriteBool, DO_NOTHING ),
-	WriteByte = detours.attach( FILE_META.WriteByte, DO_NOTHING ),
-	WriteDouble = detours.attach( FILE_META.WriteDouble, DO_NOTHING ),
-	WriteFloat = detours.attach( FILE_META.WriteFloat, DO_NOTHING ),
-	WriteLong = detours.attach( FILE_META.WriteLong, DO_NOTHING ),
-	WriteShort = detours.attach( FILE_META.WriteShort, DO_NOTHING ),
-	WriteULong = detours.attach( FILE_META.WriteULong, DO_NOTHING ),
-	WriteUShort = detours.attach( FILE_META.WriteUShort, DO_NOTHING ),
+	Write = detour_attach( FILE_META.Write, DO_NOTHING ),
+	WriteBool = detour_attach( FILE_META.WriteBool, DO_NOTHING ),
+	WriteByte = detour_attach( FILE_META.WriteByte, DO_NOTHING ),
+	WriteDouble = detour_attach( FILE_META.WriteDouble, DO_NOTHING ),
+	WriteFloat = detour_attach( FILE_META.WriteFloat, DO_NOTHING ),
+	WriteLong = detour_attach( FILE_META.WriteLong, DO_NOTHING ),
+	WriteShort = detour_attach( FILE_META.WriteShort, DO_NOTHING ),
+	WriteULong = detour_attach( FILE_META.WriteULong, DO_NOTHING ),
+	WriteUShort = detour_attach( FILE_META.WriteUShort, DO_NOTHING ),
 
 	__tostring = FILE_META.__tostring,
 	Size = FILE_META.Size,
@@ -752,16 +755,16 @@ local WriteOnlyFile = {
 	WriteULong = FILE_META.WriteULong,
 	WriteUShort = FILE_META.WriteUShort,
 
-	Read = detours.attach( FILE_META.Read, RETURN("") ),
-	ReadBool = detours.attach( FILE_META.ReadBool, RETURN(false) ),
-	ReadByte = detours.attach( FILE_META.ReadByte, RETURN(0) ),
-	ReadDouble = detours.attach( FILE_META.ReadDouble, RETURN(0) ),
-	ReadFloat = detours.attach( FILE_META.ReadFloat, RETURN(0) ),
-	ReadLong = detours.attach( FILE_META.ReadLong, RETURN(0) ),
-	ReadShort = detours.attach( FILE_META.ReadShort, RETURN(0) ),
-	ReadULong = detours.attach( FILE_META.ReadULong, RETURN(0) ),
-	ReadUShort = detours.attach( FILE_META.ReadUShort, RETURN(0) ),
-	ReadLine = detours.attach( FILE_META.ReadLine, RETURN("") ),
+	Read = detour_attach( FILE_META.Read, RETURN("") ),
+	ReadBool = detour_attach( FILE_META.ReadBool, RETURN(false) ),
+	ReadByte = detour_attach( FILE_META.ReadByte, RETURN(0) ),
+	ReadDouble = detour_attach( FILE_META.ReadDouble, RETURN(0) ),
+	ReadFloat = detour_attach( FILE_META.ReadFloat, RETURN(0) ),
+	ReadLong = detour_attach( FILE_META.ReadLong, RETURN(0) ),
+	ReadShort = detour_attach( FILE_META.ReadShort, RETURN(0) ),
+	ReadULong = detour_attach( FILE_META.ReadULong, RETURN(0) ),
+	ReadUShort = detour_attach( FILE_META.ReadUShort, RETURN(0) ),
+	ReadLine = detour_attach( FILE_META.ReadLine, RETURN("") ),
 
 	__tostring = FILE_META.__tostring,
 	Size = FILE_META.Size,
@@ -840,7 +843,7 @@ local function permFromPath(path, scope)
 	end
 end
 
-_G.file.Open = detours.attach(file.Open, function(hk, path, mode, scope)
+_G.file.Open = detour_attach(file.Open, function(hk, path, mode, scope)
 	if not scope or not d_isstring(mode) then
 		-- Error
 		return hk(path, mode, scope)
@@ -862,7 +865,7 @@ _G.file.Open = detours.attach(file.Open, function(hk, path, mode, scope)
 					return nil
 				elseif mode_required_perms[perm] then
 					local handle = hk(path, mode, scope)
-					d_setmetatable(handle, HandleMetas[mode])
+					d_objsetmetatable(handle, HandleMetas[mode])
 				else
 					log(LOGGER.WARN, "Access denied to file %q for scope %q. Need permission %s", path, scope, perm)
 				end
@@ -871,7 +874,7 @@ _G.file.Open = detours.attach(file.Open, function(hk, path, mode, scope)
 	end
 end)
 
-_G.file.Rename = detours.attach(file.Rename, function(hk, path, to)
+_G.file.Rename = detour_attach(file.Rename, function(hk, path, to)
 	local perm = permFromPath(path, "DATA")
 	local perm2 = permFromPath(to, "DATA")
 	if perm == FilePermission.hidden or FilePermission.readonly then
@@ -886,7 +889,7 @@ _G.file.Rename = detours.attach(file.Rename, function(hk, path, to)
 	return hk(path, to)
 end)
 
-_G.file.Time = detours.attach(file.Time, function(hk, path, scope)
+_G.file.Time = detour_attach(file.Time, function(hk, path, scope)
 	local perm = permFromPath(path, scope)
 	if perm == FilePermission.hidden or perm == FilePermission.writeonly then
 		log(LOGGER.WARN, "Someone tried to get the time of file [%s]", path)
@@ -895,7 +898,7 @@ _G.file.Time = detours.attach(file.Time, function(hk, path, scope)
 	return hk(path, scope)
 end)
 
-_G.file.IsDir = detours.attach(file.IsDir, function(hk, path, scope)
+_G.file.IsDir = detour_attach(file.IsDir, function(hk, path, scope)
 	local perm = permFromPath(path, scope)
 	if perm == FilePermission.hidden then
 		log(LOGGER.WARN, "Someone tried to check if file [%s] is a directory", path)
@@ -904,7 +907,7 @@ _G.file.IsDir = detours.attach(file.IsDir, function(hk, path, scope)
 	return hk(path, scope)
 end)
 
-_G.file.Exists = detours.attach(file.Exists, function(hk, path, scope)
+_G.file.Exists = detour_attach(file.Exists, function(hk, path, scope)
 	local perm = permFromPath(path, scope)
 	if perm == FilePermission.hidden then
 		log(LOGGER.WARN, "Someone tried to check if file [%s] exists", path)
@@ -913,7 +916,7 @@ _G.file.Exists = detours.attach(file.Exists, function(hk, path, scope)
 	return hk(path, scope)
 end)
 
-_G.file.Size = detours.attach(file.Size, function(hk, path, scope)
+_G.file.Size = detour_attach(file.Size, function(hk, path, scope)
 	local perm = permFromPath(path, scope)
 	if perm == FilePermission.hidden then
 		log(LOGGER.WARN, "Someone tried to get the size of file [%s]", path)
@@ -922,7 +925,7 @@ _G.file.Size = detours.attach(file.Size, function(hk, path, scope)
 	return hk(path, scope)
 end)
 
-_G.file.Find = detours.attach(file.Find, function(hk, path, scope, sorting)
+_G.file.Find = detour_attach(file.Find, function(hk, path, scope, sorting)
 	local perm = permFromPath(path, scope)
 
 	if perm == FilePermission.hidden then
@@ -933,7 +936,7 @@ _G.file.Find = detours.attach(file.Find, function(hk, path, scope, sorting)
 	return hk(path, scope, sorting)
 end)
 
-_G.file.AsyncRead = detours.attach(file.AsyncRead, function(hk, path, scope, callback, sync)
+_G.file.AsyncRead = detour_attach(file.AsyncRead, function(hk, path, scope, callback, sync)
 	local perm = permFromPath(path, scope or "DATA")
 	if perm == FilePermission.hidden or perm == FilePermission.writeonly then
 		log(LOGGER.WARN, "Someone tried to async read file [%s]", path)
@@ -944,7 +947,7 @@ _G.file.AsyncRead = detours.attach(file.AsyncRead, function(hk, path, scope, cal
 	return hk(path, scope, callback, sync)
 end)
 
-_G.net.Start = detours.attach(net.Start, function(hk, str, unreliable)
+_G.net.Start = detour_attach(net.Start, function(hk, str, unreliable)
 	if BlockedNetMessages[str] then
 		return log(LOGGER.INFO, "Blocked net.Start(%q, %s)!", str, unreliable)
 	end
@@ -954,60 +957,60 @@ _G.net.Start = detours.attach(net.Start, function(hk, str, unreliable)
 end)
 
 local MAX_REP = 1000000
-_G.string.rep = detours.attach(string.rep, function(hk, str, reps, sep)
+_G.string.rep = detour_attach(string.rep, function(hk, str, reps, sep)
 	-- Max string.rep length is 1,000,000
 	if #str * reps + ( d_isstring(sep) and #sep or 0 ) * reps > MAX_REP then
-		return log(LOGGER.EVIL, "Someone tried to string.rep with a fucking massive return string!")
+		return log(LOGGER.WARN, "Someone tried to string.rep with a fucking massive return string!")
 	end
 	return hk(str, reps, sep)
 end)
 
-_G.ClientsideModel = detours.attach(ClientsideModel, function(hk, model, rendergroup)
+_G.ClientsideModel = detour_attach(ClientsideModel, function(hk, model, rendergroup)
 	if not d_isstring(model) then return end
 	if isMaliciousModel(model) then
-		return log(LOGGER.EVIL, "Someone tried to create a ClientsideModel with a .bsp model!")
+		return log(LOGGER.WARN, "Someone tried to create a ClientsideModel with a .bsp model!")
 	end
 	return hk(model, rendergroup)
 end)
 
-_G.ClientsideScene = detours.attach(ClientsideScene, function(hk, model, targetEnt)
+_G.ClientsideScene = detour_attach(ClientsideScene, function(hk, model, targetEnt)
 	if not d_isstring(model) then return end
 	if isMaliciousModel(model) then
-		return log(LOGGER.EVIL, "Someone tried to create a ClientsideScene with a .bsp model!")
+		return log(LOGGER.WARN, "Someone tried to create a ClientsideScene with a .bsp model!")
 	end
 	return hk(model, targetEnt)
 end)
 
-_G.ClientsideRagdoll = detours.attach(ClientsideRagdoll, function(hk, model, rendergroup)
+_G.ClientsideRagdoll = detour_attach(ClientsideRagdoll, function(hk, model, rendergroup)
 	if not d_isstring(model) then return end
 	if isMaliciousModel(model) then
-		return log(LOGGER.EVIL, "Someone tried to create a ClientsideRagdoll with a .bsp model!")
+		return log(LOGGER.WARN, "Someone tried to create a ClientsideRagdoll with a .bsp model!")
 	end
 	return hk(model, rendergroup)
 end)
 
-_G.ents.CreateClientProp = detours.attach(ents.CreateClientProp, function(hk, model)
+_G.ents.CreateClientProp = detour_attach(ents.CreateClientProp, function(hk, model)
 	if not d_isstring(model) then model = "models/error.mdl" end
 	if isMaliciousModel(model) then
-		return log(LOGGER.EVIL, "Someone tried to create a malicious ClientProp with a .bsp model!")
+		return log(LOGGER.WARN, "Someone tried to create a malicious ClientProp with a .bsp model!")
 	end
 	return hk(model)
 end)
 
 -- Todo: Stuff with these
-_G.CompileString = detours.attach(CompileString, function(hk, code, identifier, handleError)
+_G.CompileString = detour_attach(CompileString, function(hk, code, identifier, handleError)
 	return hk(code, identifier, handleError)
 end)
 
-_G.RunString = detours.attach(RunString, function(hk, code, identifier, handleError)
+_G.RunString = detour_attach(RunString, function(hk, code, identifier, handleError)
 	return hk(code, identifier, handleError)
 end)
 
-_G.RunStringEx = detours.attach(RunStringEx, function(hk, code, identifier, handleError)
+_G.RunStringEx = detour_attach(RunStringEx, function(hk, code, identifier, handleError)
 	return hk(code, identifier, handleError)
 end)
 
-_G.game.MountGMA = detours.attach(game.MountGMA, function(hk, path)
+_G.game.MountGMA = detour_attach(game.MountGMA, function(hk, path)
 	log( LOGGER.INFO, "Mounting GMA: %q", path )
 	return hk(path)
 end)
@@ -1016,7 +1019,7 @@ end)
 --- https://github.com/Facepunch/garrysmod-issues/issues/3637
 local ISSUE_3637 = {"env_fire", "entityflame", "_firesmoke"}
 
-_G.game.CleanUpMap = detours.attach(game.CleanUpMap, function(hk, dontSendToClients, extraFilters)
+_G.game.CleanUpMap = detour_attach(game.CleanUpMap, function(hk, dontSendToClients, extraFilters)
 	if d_istable(extraFilters) then
 		local len = #extraFilters
 		d_rawset(extraFilters, len + 1, "env_fire")
@@ -1029,7 +1032,7 @@ _G.game.CleanUpMap = detours.attach(game.CleanUpMap, function(hk, dontSendToClie
 	hk(dontSendToClients, extraFilters)
 end)
 
-_G.gui.OpenURL = detours.attach(gui.OpenURL, function(hk, url)
+_G.gui.OpenURL = detour_attach(gui.OpenURL, function(hk, url)
 	if not isWhitelistedURL(url) then
 		return log( LOGGER.INFO, "Blocked unwhitelisted gui.OpenURL(%q)", url )
 	end
@@ -1037,35 +1040,35 @@ _G.gui.OpenURL = detours.attach(gui.OpenURL, function(hk, url)
 	return hk(url)
 end)
 
-_G.gui.HideGameUI = detours.attach(gui.HideGameUI, function(hk)
+_G.gui.HideGameUI = detour_attach(gui.HideGameUI, function(hk)
 	log( LOGGER.INFO, "Blocked gui.HideGameUI" )
 end)
 
-_G.AddConsoleCommand = detours.attach(AddConsoleCommand, function(hk, name, helpText, flags)
+_G.AddConsoleCommand = detour_attach(AddConsoleCommand, function(hk, name, helpText, flags)
 	-- Garry used to have it so that adding a console command named 'sendrcon' would crash your game.
 	-- Malicious anticheats and others would abuse this. I'm not sure if adding sendrcon even still crashes you.
 	-- https://github.com/CookieMaster/GMD/blob/11eae396d7448df325601d748ee09293ba0dd5c3/Addons/ULX%20Addons/custom-ulx-commands-and-utilities-23-1153/CustomCommands/lua/ulx/modules/sh/cc_util(2).lua
 
 	if d_isstring(name) and d_stringfind(name, "sendrcon") then
-		return log( LOGGER.EVIL, "Someone tried to crash by adding 'sendrcon' as a concmd" )
+		return log( LOGGER.WARN, "Someone tried to crash by adding 'sendrcon' as a concmd" )
 	end
 
 	hk(name, helpText, flags)
 end)
 
-_G.os.date = detours.attach(os.date, function(hk, format, time)
+_G.os.date = detour_attach(os.date, function(hk, format, time)
 	-- Patches #329 https://github.com/Facepunch/garrysmod-issues/issues/329
 	if d_isstring(format) then
 		for v in d_stringgmatch(format, "%%(.?)") do
 			if not d_stringmatch(v, "[%%aAbBcCdDSHeUmMjIpwxXzZyY]") then
-				return log(LOGGER.EVIL, "Blocked evil os.date format!")
+				return log(LOGGER.WARN, "Blocked evil os.date format!")
 			end
 		end
 	end
 	return hk(format, time)
 end)
 
-_G.sound.PlayURL = detours.attach(sound.PlayURL, function(hk, url, flags, callback)
+_G.sound.PlayURL = detour_attach(sound.PlayURL, function(hk, url, flags, callback)
 	if not isWhitelistedURL(url) then
 		return log( LOGGER.WARN, "Blocked sound.PlayURL(%q, %q, %p)", url, flags, callback )
 	end
@@ -1074,14 +1077,14 @@ _G.sound.PlayURL = detours.attach(sound.PlayURL, function(hk, url, flags, callba
 	return hk(url, flags, callback)
 end)
 
-_G.HTTP = detours.attach(HTTP, function(hk, parameters)
+_G.HTTP = detour_attach(HTTP, function(hk, parameters)
 	if not d_istable(parameters) then
 		return hk(parameters)
 	end
 
 	local url = d_rawget(parameters, "url")
 	if url and not isWhitelistedURL(url) then
-		log( LOGGER.WARN, "Blocked HTTP(%q)", url)
+		log( LOGGER.TRACE, "Blocked HTTP(%q)", url)
 
 		local onfailure = d_rawget(parameters, "onfailure")
 		if d_isfunction(onfailure) then
@@ -1094,7 +1097,7 @@ _G.HTTP = detours.attach(HTTP, function(hk, parameters)
 end)
 
 -- Registry detours
-_R.Player.ConCommand = detours.attach(_R.Player.ConCommand, function(hk, ply, cmd_str)
+_R.Player.ConCommand = detour_attach(_R.Player.ConCommand, function(hk, ply, cmd_str)
 	if not ply or not d_isstring(cmd_str) then
 		return hk(ply, cmd_str)
 	end
@@ -1107,19 +1110,19 @@ _R.Player.ConCommand = detours.attach(_R.Player.ConCommand, function(hk, ply, cm
 	return hk(ply, cmd_str)
 end)
 
-_R.Entity.SetModel = detours.attach(_R.Entity.SetModel, function(hk, ent, modelName)
+_R.Entity.SetModel = detour_attach(_R.Entity.SetModel, function(hk, ent, modelName)
 	if not d_isstring(modelName) then return end
 	if isMaliciousModel(modelName) then
-		return log(LOGGER.EVIL, "Entity:SetModel(%s) blocked!", modelName) -- Crash
+		return log(LOGGER.WARN, "Entity:SetModel(%s) blocked!", modelName) -- Crash
 	end
 	hk(ent, modelName)
 end)
 
 local ISSUE_4116
-ISSUE_4116 = detours.attach(_R.Entity.DrawModel, function(hk, ent, flags)
+ISSUE_4116 = detour_attach(_R.Entity.DrawModel, function(hk, ent, flags)
 	-- Patches #2688 https://github.com/Facepunch/garrysmod-issues/issues/2688
 	if ent == WORLDSPAWN then
-		return log(LOGGER.EVIL, "Entity.DrawModel called with worldspawn")
+		return log(LOGGER.WARN, "Entity.DrawModel called with worldspawn")
 	end
 
 	-- Fixes #4116 https://github.com/Facepunch/garrysmod-issues/issues/4116
@@ -1150,8 +1153,8 @@ local function Checksum(hk, str)
 	return hk(str)
 end
 
-_G.util.MD5 = detours.attach(util.MD5, Checksum)
-_G.util.SHA1 = detours.attach(util.SHA1, Checksum)
-_G.util.SHA256 = detours.attach(util.SHA256, Checksum)
+_G.util.MD5 = detour_attach(util.MD5, Checksum)
+_G.util.SHA1 = detour_attach(util.SHA1, Checksum)
+_G.util.SHA256 = detour_attach(util.SHA256, Checksum)
 
 SAFETY_MEMUSED = d_collectgarbage("count")
