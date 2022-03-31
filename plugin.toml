@@ -2,7 +2,7 @@
 name = "Safety"
 description = "Plugin to keep your gmod experience nice and safe through detouring HTTP and patching crash bugs / exploiting your client."
 author = "Vurv"
-version = "0.2.2"
+version = "0.3.0"
 language = "lua"
 
 # Custom settings for your plugin.
