@@ -54,8 +54,6 @@ function Log(urgency, fmt, ...)
 end
 
 --- Startup
-
-jit.off()
 local Str = [[
 =====================================================================
 
