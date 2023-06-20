@@ -99,8 +99,23 @@ function MemCounter()
 	return out
 end
 
-for _, v in pairs {"builtins", "cam", "debug", "ents", "file", "game", "gui", "http", "jit", "mesh", "mtable", "net", "os", "registry", "render", "sound", "string", "table", "util"} do
-	require( "detour/" .. v )
-end
+require("detour/builtins")
+require("detour/debug")
+require("detour/ents")
+require("detour/file")
+require("detour/game")
+require("detour/gui")
+require("detour/http")
+require("detour/jit")
+require("detour/mesh")
+require("detour/mtable")
+require("detour/net")
+require("detour/os")
+require("detour/registry")
+require("detour/render")
+require("detour/sound")
+require("detour/string")
+require("detour/table")
+require("detour/util")
 
 SAFETY_MEMUSED = d_collectgarbage("count")
