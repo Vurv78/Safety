@@ -88,8 +88,6 @@ end
 	Run detours
 ]]
 
-LOCKED_REGISTRY = Util.getLocked( debug.getregistry() )
-
 local SAFETY_MEMUSED
 function MemCounter()
 	local out = d_collectgarbage("count")

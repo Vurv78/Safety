@@ -17,7 +17,7 @@ end)
 
 _G.RunConsoleCommand = Detour.attach(RunConsoleCommand, function(hk, command, ...)
 	local command_ty = d_type(command)
-	if command_ty ~= TYPE_NUMBER and command_ty ~= TYPE_STRING then
+	if command_ty ~= "number" and command_ty ~= "string" then
 		return hk(command, ...)
 	end
 
@@ -59,10 +59,6 @@ _G.setfenv = Detour.attach(setfenv, function(hk, location, enviroment)
 		Log(LOGGER.WARN, "Someone tried to setfenv(0, x)!") return
 	end
 	return hk( Detour.shadow(location), enviroment)
-end)
-
-_G.FindMetaTable = Detour.attach(FindMetaTable, function(hk, name)
-	return LOCKED_REGISTRY[name]
 end)
 
 _G.ClientsideModel = Detour.attach(ClientsideModel, function(hk, model, rendergroup)

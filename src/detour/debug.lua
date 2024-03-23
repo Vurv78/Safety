@@ -46,10 +46,6 @@ _G.debug.getfenv = Detour.attach(debug.getfenv, function(hk, object)
 	return hk( Detour.shadow(object) )
 end)
 
-_G.debug.getregistry = Detour.attach(debug.getregistry, function()
-	return LOCKED_REGISTRY
-end)
-
 _G.debug.getupvalue = Detour.attach(debug.getupvalue, function(hk, func, index)
 	if not d_isnumber(index) or not d_isfunction(func) then
 		-- Error

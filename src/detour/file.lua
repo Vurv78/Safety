@@ -97,7 +97,7 @@ local function permFromPath(path, scope)
 	end
 end
 
-local FILE_META = debug.getregistry().File
+local FILE_META = FindMetaTable("File")
 
 local function DO_NOTHING() end
 local function RETURN(val) return function() return val end end
@@ -286,7 +286,7 @@ end)
 
 _G.file.Delete = Detour.attach(file.Delete, function(hk, name)
 	local name_ty = d_type(name)
-	if name_ty ~= TYPE_NUMBER and name_ty ~= TYPE_STRING then
+	if name_ty ~= "number" and name_ty ~= "string" then
 		-- Error
 		return hk(name)
 	end

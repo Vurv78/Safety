@@ -17,3 +17,7 @@ This is a plugin for [Autorun-rs](https://github.com/Vurv78/Autorun-rs) to make 
 ## 🤔 Usage
 This is meant to be used with Autorun's plugin system.  
 __Drag this repo (as a folder) into your ``C:/Users/<NAME>/autorun/plugins`` folder!__
+
+## Minimum Supported Garry's Mod Version
+
+Current minimum supported version is whichever removed `debug.getregistry()`, as the detours for that have now been removed. If you keep up to date, you shouldn't have to worry about this.

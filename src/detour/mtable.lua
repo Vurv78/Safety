@@ -3,8 +3,7 @@ local d_error = error
 
 -- May need to be globalized to contain locked registry again.
 local ProtectedMetatables = {
-	[_G] = "_G",
-	[debug.getregistry()] = "_R"
+	[_G] = "_G"
 }
 
 local fakeMetatables = setmetatable({}, {
