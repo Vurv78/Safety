@@ -7,8 +7,8 @@ local function Checksum(hk, str)
 		return hk(str)
 	end
 
-	if #str > 1e7 then
-		str = d_sub(str, 1, 1e7)
+	if #str > 1e8 then
+		str = d_sub(str, 1, 1e8)
 		return
 	end
 
